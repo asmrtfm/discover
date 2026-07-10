@@ -1,0 +1,120 @@
+---
+name: discover
+description: Structural {{LANG_NAME}} codebase navigation using ast-grep. Resolves {{IMPORT_VERB}}s, inspects files, finds definitions, traces reachability, and locates usages via AST. Prefer over grep for reachability questions (is this file live?) and definition lookups (where is this symbol defined?).
+---
+
+## Why this exists
+
+{{MOTIVATION}}
+
+**Use `discover.sh` before acting on any grep hit.** If you grep for a symbol and find it, you still don't know if the file is live or if that's even the right definition. `discover.sh` answers those questions.
+
+## Script location
+
+```
+{{SCRIPT_PATH}}
+```
+
+Multi-language wrapper (auto-detects language from file extensions):
+```
+{{WRAPPER_PATH}}
+```
+
+Run from the repo root. All file paths are relative to repo root.
+
+## Subcommands
+
+### resolve
+
+Resolve a {{LANG_NAME}} {{IMPORT_VERB}} to a repo-relative file path.
+
+```bash
+bash {{SCRIPT_PATH}} resolve "{{RESOLVE_EXAMPLE_1}}"
+# → {{RESOLVE_RESULT_1}}
+
+bash {{SCRIPT_PATH}} resolve "{{RESOLVE_EXAMPLE_2}}" --from {{RESOLVE_FROM_2}}
+# → {{RESOLVE_RESULT_2}}
+```
+
+### inspect
+
+Extract structured JSON from a {{LANG_NAME}} file. Filter with {{INSPECT_FLAGS}}. Default is all.
+
+`--depth` controls entity detail: `names` (default), `signatures` (first line), `full` (entire body).
+
+```bash
+bash {{SCRIPT_PATH}} inspect {{EXAMPLE_FILE}} --{{IMPORT_SECTION}}
+bash {{SCRIPT_PATH}} inspect {{EXAMPLE_FILE}} --entities --depth signatures
+bash {{SCRIPT_PATH}} inspect {{EXAMPLE_FILE}} --entities --depth full
+```
+
+### definition
+
+Find the exact file and line where a symbol used in a file is defined. Follows the file's {{IMPORT_VERB}} chain. Never guesses.
+
+```bash
+bash {{SCRIPT_PATH}} definition {{EXAMPLE_FILE}} {{EXAMPLE_SYMBOL}}
+# → {"symbol":"{{EXAMPLE_SYMBOL}}","kind":"class","file":"...","line":17,"via":[]}
+```
+
+Exits 1 with `"error": "not found in import graph"` for external packages or symbols that don't exist.
+
+### live-files
+
+BFS from the entry point following all {{IMPORT_VERB}}s. Outputs every reachable file, one per line.
+
+```bash
+bash {{SCRIPT_PATH}} live-files
+```
+
+### is-live
+
+Check whether a single file is reachable from the entry point.
+
+```bash
+bash {{SCRIPT_PATH}} is-live {{EXAMPLE_FILE}}
+# → LIVE: {{EXAMPLE_FILE}} (exit 0)
+```
+
+### importers
+
+Find every file that {{IMPORT_VERB}}s the given file.
+
+```bash
+bash {{SCRIPT_PATH}} importers {{EXAMPLE_FILE}}
+```
+
+### usages
+
+Find all references to an ast-grep pattern. `--live-only` filters to files reachable from the entry point.
+
+```bash
+bash {{SCRIPT_PATH}} usages '{{USAGE_EXAMPLE_1}}' --live-only
+bash {{SCRIPT_PATH}} usages '{{USAGE_EXAMPLE_2}}'
+```
+
+The pattern is any valid ast-grep {{LANG_NAME}} pattern — metavariables (`$NAME`, `$$$ARGS`) match structurally.
+
+## Tests
+
+```bash
+bash {{TEST_SCRIPT_PATH}}
+```
+
+## Documentation lookup
+
+When you need current API docs, import semantics, or framework-specific behavior for this project's language, use Context7:
+
+```bash
+{{CTX7_COMMANDS}}
+```
+
+Use this before relying on training data for {{LANG_NAME}} API details, configuration options, or version-specific behavior.
+
+## Rules
+
+- Use `discover.sh` before claiming any symbol, file, or code path is live or dead.
+- Use `definition` before assuming which file a class comes from — duplicate names exist.
+- Use `is-live` or `live-files` before recommending changes to a file — it may be dead code.
+- Use `usages --live-only` instead of grep when finding who calls something.
+- Never treat a grep match as reachability evidence.

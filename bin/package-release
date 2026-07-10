@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Packages built ast-grep binaries into versioned release archives.
+# Run after bin/build-static to produce distributable .tar.gz / .zip files.
+#
+# Usage:
+#   bin/package-release                  # package all built targets
+#   bin/package-release --version 0.43.0 # override version detection
+
+REPO_ROOT="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+AST_GREP_DIR="$REPO_ROOT/ast-grep"
+DIST_DIR="$REPO_ROOT/dist"
+
+# Binary names produced by the CLI crate
+BINARIES=(ast-grep sg)
+
+# Target → human-readable platform name for archive naming
+declare -A PLATFORM_NAMES=(
+  [x86_64-unknown-linux-musl]="linux-x86_64"
+  [aarch64-unknown-linux-musl]="linux-aarch64"
+  [x86_64-apple-darwin]="macos-x86_64"
+  [aarch64-apple-darwin]="macos-aarch64"
+  [x86_64-pc-windows-msvc]="windows-x86_64"
+)
+
+# Targets that use .zip instead of .tar.gz
+declare -A USE_ZIP=(
+  [x86_64-pc-windows-msvc]=1
+)
+
+# Windows targets append .exe to binaries
+declare -A WINDOWS_TARGET=(
+  [x86_64-pc-windows-msvc]=1
+)
+
+detect_version() {
+  grep -m1 'version\s*=' "$AST_GREP_DIR/Cargo.toml" \
+    | sed 's/.*"\(.*\)".*/\1/'
+}
+
+# --- Argument parsing ---
+
+VERSION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) VERSION="$2"; shift 2 ;;
+    -h|--help)
+      cat <<EOF
+Usage: bin/package-release [OPTIONS]
+
+Package built ast-grep binaries into release archives.
+
+Options:
+  --version VERSION  Override version (default: read from Cargo.toml)
+  -h, --help         Show this help
+
+Output: dist/ast-grep-<version>-<platform>.<ext>
+
+Each archive contains the ast-grep and sg binaries plus a LICENSE file.
+Archives use .tar.gz for Unix targets and .zip for Windows.
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+VERSION="${VERSION:-$(detect_version)}"
+echo "Packaging ast-grep v${VERSION}"
+
+# --- Find built targets ---
+
+built_targets=()
+for target in "${!PLATFORM_NAMES[@]}"; do
+  release_dir="$AST_GREP_DIR/target/$target/release"
+  if [[ -n "${WINDOWS_TARGET[$target]:-}" ]]; then
+    binary="$release_dir/ast-grep.exe"
+  else
+    binary="$release_dir/ast-grep"
+  fi
+  if [[ -x "$binary" ]]; then
+    built_targets+=("$target")
+  fi
+done
+
+if [[ ${#built_targets[@]} -eq 0 ]]; then
+  echo "ERROR: No built targets found. Run 'bin/build-static' first." >&2
+  exit 1
+fi
+
+echo "Found builds for: ${built_targets[*]}"
+echo ""
+
+# --- Package each target ---
+
+mkdir -p "$DIST_DIR"
+
+for target in "${built_targets[@]}"; do
+  platform="${PLATFORM_NAMES[$target]}"
+  archive_name="ast-grep-${VERSION}-${platform}"
+  staging_dir="$DIST_DIR/.staging/$archive_name"
+  release_dir="$AST_GREP_DIR/target/$target/release"
+
+  rm -rf "$staging_dir"
+  mkdir -p "$staging_dir"
+
+  # Copy binaries
+  for bin_name in "${BINARIES[@]}"; do
+    if [[ -n "${WINDOWS_TARGET[$target]:-}" ]]; then
+      src="$release_dir/${bin_name}.exe"
+    else
+      src="$release_dir/$bin_name"
+    fi
+    if [[ -f "$src" ]]; then
+      cp "$src" "$staging_dir/"
+      # Strip debug symbols for smaller binaries (skip on cross-arch)
+      if [[ -z "${WINDOWS_TARGET[$target]:-}" ]]; then
+        strip "$staging_dir/$bin_name" 2>/dev/null || true
+      fi
+    fi
+  done
+
+  # Include license
+  if [[ -f "$AST_GREP_DIR/LICENSE" ]]; then
+    cp "$AST_GREP_DIR/LICENSE" "$staging_dir/"
+  fi
+
+  # Create archive
+  if [[ -n "${USE_ZIP[$target]:-}" ]]; then
+    archive_file="$DIST_DIR/${archive_name}.zip"
+    (cd "$DIST_DIR/.staging" && zip -r "$archive_file" "$archive_name/")
+    echo "  ✓ $archive_file"
+  else
+    archive_file="$DIST_DIR/${archive_name}.tar.gz"
+    tar -czf "$archive_file" -C "$DIST_DIR/.staging" "$archive_name"
+    echo "  ✓ $archive_file"
+  fi
+
+  # Print binary size
+  for bin_name in "${BINARIES[@]}"; do
+    if [[ -n "${WINDOWS_TARGET[$target]:-}" ]]; then
+      f="$staging_dir/${bin_name}.exe"
+    else
+      f="$staging_dir/$bin_name"
+    fi
+    if [[ -f "$f" ]]; then
+      size=$(du -h "$f" | cut -f1)
+      echo "    $bin_name: $size"
+    fi
+  done
+done
+
+# Generate checksums
+echo ""
+echo "Generating checksums..."
+(cd "$DIST_DIR" && sha256sum ast-grep-${VERSION}-*.{tar.gz,zip} 2>/dev/null > "checksums-${VERSION}.sha256" || true)
+echo "  ✓ $DIST_DIR/checksums-${VERSION}.sha256"
+
+# Cleanup staging
+rm -rf "$DIST_DIR/.staging"
+
+echo ""
+echo "Release artifacts in $DIST_DIR/:"
+ls -lh "$DIST_DIR/" | grep -v '^\(total\|\.staging\)'

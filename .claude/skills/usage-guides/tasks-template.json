@@ -1,0 +1,7 @@
+{
+  "per_language": {
+    "subject": "Create USAGE.md for {{LANG_NAME}}",
+    "description": "Write langs/{{lang}}-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "activeForm": "Writing {{LANG_NAME}} usage guide"
+  }
+}

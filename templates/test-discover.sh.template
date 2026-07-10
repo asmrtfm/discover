@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# test-discover-{{LANG_ID}}.sh — smoke tests for discover-{{LANG_ID}}.sh
+#
+# Run from the repo root:
+#   bash {{SCRIPT_DIR}}/test-discover-{{LANG_ID}}.sh
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NAV="$SCRIPT_DIR/discover-{{LANG_ID}}.sh"
+PASS=0
+FAIL=0
+
+assert_eq() {
+    local label="$1" expected="$2" actual="$3"
+    if [ "$expected" = "$actual" ]; then
+        echo "  PASS: $label"
+        ((PASS++))
+    else
+        echo "  FAIL: $label"
+        echo "    expected: $expected"
+        echo "    actual:   $actual"
+        ((FAIL++))
+    fi
+}
+
+assert_contains() {
+    local label="$1" needle="$2" haystack="$3"
+    if echo "$haystack" | grep -qF "$needle"; then
+        echo "  PASS: $label"
+        ((PASS++))
+    else
+        echo "  FAIL: $label"
+        echo "    expected to contain: $needle"
+        echo "    actual: $haystack"
+        ((FAIL++))
+    fi
+}
+
+assert_not_contains() {
+    local label="$1" needle="$2" haystack="$3"
+    if ! echo "$haystack" | grep -qF "$needle"; then
+        echo "  PASS: $label"
+        ((PASS++))
+    else
+        echo "  FAIL: $label"
+        echo "    expected NOT to contain: $needle"
+        ((FAIL++))
+    fi
+}
+
+assert_exit() {
+    local label="$1" expected_code="$2"
+    shift 2
+    "$@" >/dev/null 2>/dev/null
+    local actual_code=$?
+    if [ "$actual_code" -eq "$expected_code" ]; then
+        echo "  PASS: $label"
+        ((PASS++))
+    else
+        echo "  FAIL: $label"
+        echo "    expected exit code: $expected_code"
+        echo "    actual exit code:   $actual_code"
+        ((FAIL++))
+    fi
+}
+
+# ─────────────────────────────────────────────────────────
+# Find a sample source file to test against
+# ─────────────────────────────────────────────────────────
+SAMPLE_FILE=""
+if [ -n "{{ENTRY_POINT}}" ] && [ -f "{{ENTRY_POINT}}" ]; then
+    SAMPLE_FILE="{{ENTRY_POINT}}"
+else
+    SAMPLE_FILE="$(find "{{SRC_DIR}}" -name "*{{FILE_EXT}}" -print -quit 2>/dev/null)"
+fi
+
+if [ -z "$SAMPLE_FILE" ]; then
+    echo "SKIP: no {{FILE_EXT}} files found in {{SRC_DIR}}"
+    exit 0
+fi
+
+echo "Testing against: $SAMPLE_FILE"
+echo ""
+
+# ─────────────────────────────────────────────────────────
+echo "=== inspect ==="
+
+inspect_out="$(bash "$NAV" inspect "$SAMPLE_FILE" 2>&1)"
+
+assert_contains "inspect returns file field" \
+    '"file":' \
+    "$inspect_out"
+
+assert_contains "inspect returns valid JSON" \
+    '{' \
+    "$inspect_out"
+
+# ─────────────────────────────────────────────────────────
+echo "=== inspect --entities ==="
+
+entities_out="$(bash "$NAV" inspect "$SAMPLE_FILE" --entities 2>&1)"
+
+assert_contains "entities returns array" \
+    '"entities":' \
+    "$entities_out"
+
+# ─────────────────────────────────────────────────────────
+echo "=== inspect --entities --depth signatures ==="
+
+sigs_out="$(bash "$NAV" inspect "$SAMPLE_FILE" --entities --depth signatures 2>&1)"
+
+assert_contains "signatures include text field" \
+    '"text":' \
+    "$sigs_out"
+
+# ─────────────────────────────────────────────────────────
+echo "=== usages ==="
+
+assert_exit "usages with impossible pattern exits 0" 0 \
+    bash "$NAV" usages 'ZZZZ_IMPOSSIBLE_PATTERN_ZZZZ'
+
+# ─────────────────────────────────────────────────────────
+echo ""
+echo "─────────────────────────────────────"
+echo "PASS: $PASS  FAIL: $FAIL"
+if [ "$FAIL" -gt 0 ]; then
+    echo "SOME TESTS FAILED"
+    exit 1
+else
+    echo "ALL TESTS PASSED"
+    exit 0
+fi

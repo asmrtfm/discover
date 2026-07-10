@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# discover — CLI entry point for the discover framework.
+#
+# Usage:
+#   discover init [<lang>] [--entry <file>] [--package <name>] [--src-dir <dir>] [--force]
+#   discover lsp <lang>
+#   discover langs
+#
+# This script can be run from anywhere. It locates its own source directory
+# to find lang configs, templates, and the generator.
+
+
+# DISCOVER_ROOT="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+#
+SELF="$(realpath "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="${SCRIPT_DIR:-${SELF%\/*}}"
+DISCOVER_ROOT="${DISCOVER_ROOT:-${SCRIPT_DIR%\/*}}"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# ─────────────────────────────────────────────────────────
+# Load a lang config and export its variables
+# ─────────────────────────────────────────────────────────
+load_lang_config() {
+    local lang="$1"
+    local lang_config="$DISCOVER_ROOT/langs/${lang}.sh"
+    [ -f "$lang_config" ] || die "no lang config for '${lang}' — available: $(ls "$DISCOVER_ROOT/langs/"*.sh 2>/dev/null | xargs -I{} basename {} .sh | tr '\n' ' ')"
+    source "$lang_config"
+}
+
+# ─────────────────────────────────────────────────────────
+# Find nearest .claude directory
+# ─────────────────────────────────────────────────────────
+find_claude_dir() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        [ -d "$dir/.claude" ] && echo "$dir/.claude" && return 0
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+cmd_init() {
+    bash "$DISCOVER_ROOT/lib/init.sh" "$@"
+}
+
+cmd_langs() {
+    echo "Available languages:" >&2
+    for f in "$DISCOVER_ROOT"/langs/*.sh; do
+        local lang_id
+        lang_id="$(grep -oP '^LANG_ID="\K[^"]+' "$f")"
+        local lang_name
+        lang_name="$(grep -oP '^SKILL_LANG_NAME="\K[^"]+' "$f")"
+        printf "  %-12s %s\n" "$lang_id" "${lang_name:-}"
+    done
+}
+
+cmd_lsp() {
+    local lang="${1:-}"
+    [ -n "$lang" ] || die "usage: discover lsp <lang>"
+
+    load_lang_config "$lang"
+
+    echo "LSP setup: ${SKILL_LANG_NAME:-$lang}" >&2
+
+    # Step 1: Check LSP binary
+    if [ -n "${LSP_BINARY:-}" ]; then
+        if command -v "$LSP_BINARY" >/dev/null 2>&1; then
+            local lsp_path
+            lsp_path="$(command -v "$LSP_BINARY")"
+            echo "  binary   → $LSP_BINARY ($lsp_path)" >&2
+        else
+            echo "  binary   → $LSP_BINARY NOT FOUND" >&2
+            if [ -n "${LSP_INSTALL:-}" ]; then
+                echo "  install  → $LSP_INSTALL" >&2
+                read -rp "  Install now? [y/N] " answer
+                if [[ "$answer" =~ ^[Yy] ]]; then
+                    eval "$LSP_INSTALL"
+                    if command -v "$LSP_BINARY" >/dev/null 2>&1; then
+                        echo "  binary   → installed successfully" >&2
+                    else
+                        echo "  binary   → install may have failed, $LSP_BINARY still not on PATH" >&2
+                    fi
+                fi
+            else
+                echo "  install  → no install command configured (bundled with toolchain?)" >&2
+            fi
+        fi
+    else
+        echo "  binary   → none configured" >&2
+    fi
+
+    # Step 2: Enable Claude Code plugin
+    if [ -n "${LSP_PLUGIN:-}" ]; then
+        local claude_dir
+        claude_dir="$(find_claude_dir)" || die "no .claude directory found"
+        local settings_file="$claude_dir/settings.json"
+
+        if [ -f "$settings_file" ]; then
+            if jq -e ".enabledPlugins[\"${LSP_PLUGIN}\"]" "$settings_file" >/dev/null 2>&1; then
+                echo "  plugin   → ${LSP_PLUGIN} (already enabled)" >&2
+            else
+                jq ".enabledPlugins[\"${LSP_PLUGIN}\"] = true" "$settings_file" > "${settings_file}.tmp" \
+                    && mv "${settings_file}.tmp" "$settings_file"
+                echo "  plugin   → enabled ${LSP_PLUGIN}" >&2
+            fi
+        else
+            echo '{}' | jq "{enabledPlugins: {\"${LSP_PLUGIN}\": true}}" > "$settings_file"
+            echo "  plugin   → enabled ${LSP_PLUGIN} (created settings.json)" >&2
+        fi
+    else
+        echo "  plugin   → none available for ${SKILL_LANG_NAME:-$lang}" >&2
+        if [ "$lang" = "dart" ]; then
+            echo "           → Dart has no Claude Code LSP plugin; use ast-grep-dart for structural search" >&2
+        fi
+    fi
+
+    # Step 3: Verify by finding a source file
+    if [ -n "${FILE_EXT:-}" ]; then
+        local test_file
+        test_file="$(find . -name "*${FILE_EXT}" -not -path "*/node_modules/*" -not -path "*/.build/*" -not -path "*/build/*" -not -path "*/.dart_tool/*" -print -quit 2>/dev/null)"
+        if [ -n "$test_file" ]; then
+            echo "  verify   → found $test_file (restart Claude Code to test LSP)" >&2
+        else
+            echo "  verify   → no ${FILE_EXT} files found in project" >&2
+        fi
+    fi
+}
+
+subcmd="${1:-}"
+shift 2>/dev/null || true
+
+case "$subcmd" in
+    init)  cmd_init "$@" ;;
+    lsp)   cmd_lsp "$@" ;;
+    langs) cmd_langs ;;
+    *)
+        echo "usage: discover <command> [args]" >&2
+        echo "" >&2
+        echo "commands:" >&2
+        echo "  init [<lang>] [--entry <file>] [--package <name>] [--src-dir <dir>] [--force]" >&2
+        echo "      Generate discover.sh + SKILL.md in nearest .claude/skills/discover/" >&2
+        echo "      Auto-detects language from project files if <lang> is omitted." >&2
+        echo "  lsp <lang>" >&2
+        echo "      Set up LSP for a language (check binary, enable Claude Code plugin)" >&2
+        echo "  langs" >&2
+        echo "      List available language configs" >&2
+        exit 1
+        ;;
+esac
