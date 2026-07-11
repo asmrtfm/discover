@@ -46,6 +46,8 @@ fi
 ast_grep="$(find_binary ast-grep)"
 sg="$(find_binary sg)"
 
+mkdir -p ~/.cargo/bin
+
 cp "$ast_grep" ~/.cargo/bin/ast-grep
 cp "$sg" ~/.cargo/bin/sg
 

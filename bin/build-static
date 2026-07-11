@@ -72,13 +72,17 @@ check_base_prerequisites() {
   local missing=()
 
   # Rust toolchain
-  if ! command -v rustup &>/dev/null; then
-    echo "ERROR: rustup not found. Install from https://rustup.rs" >&2
-    return 1
-  fi
-  if ! command -v cargo &>/dev/null; then
-    echo "ERROR: cargo not found. Run: rustup default stable" >&2
-    return 1
+  if ! command -v rustup &>/dev/null || ! command -v cargo &>/dev/null; then
+    echo "Rust toolchain not found."
+    read -rp "Install Rust via rustup now? [Y/n] " answer
+    if [[ "${answer,,}" != "n" ]]; then
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      # shellcheck disable=SC1091
+      source "$HOME/.cargo/env"
+    else
+      echo "ERROR: Rust is required to build ast-grep." >&2
+      return 1
+    fi
   fi
 
   # C compiler — required by the cc crate for tree-sitter grammar compilation

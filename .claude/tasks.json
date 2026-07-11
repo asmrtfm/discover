@@ -1,0 +1,51 @@
+[
+  {
+    "id": "1",
+    "subject": "Create USAGE.md for Dart",
+    "description": "Write langs/dart-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "completed",
+    "blocks": ["7"]
+  },
+  {
+    "id": "2",
+    "subject": "Create USAGE.md for Swift",
+    "description": "Write langs/swift-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "completed",
+    "blocks": ["7"]
+  },
+  {
+    "id": "3",
+    "subject": "Create USAGE.md for Ruby",
+    "description": "Write langs/ruby-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "completed",
+    "blocks": ["7"]
+  },
+  {
+    "id": "4",
+    "subject": "Create USAGE.md for TypeScript",
+    "description": "Write langs/typescript-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "completed",
+    "blocks": ["7"]
+  },
+  {
+    "id": "5",
+    "subject": "Create USAGE.md for Crystal",
+    "description": "Write langs/crystal-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "pending",
+    "blocks": ["7"]
+  },
+  {
+    "id": "6",
+    "subject": "Create USAGE.md for Bash",
+    "description": "Write langs/bash-usage.md covering:\n- What structural questions this language's discover can answer\n- ast-grep pattern syntax with language-specific examples (what $VAR, $$$ARGS, --kind mean in context of this language's grammar)\n- Real patterns for common questions people ask about codebases in that language\n- The language's AST node kinds (the ones our entity extraction actually uses) and what they match\n- Import/linking model explanation",
+    "status": "pending",
+    "blocks": ["7"]
+  },
+  {
+    "id": "7",
+    "subject": "Wire USAGE.md installation into discover init",
+    "description": "Modify lib/init.sh to copy langs/<lang>-usage.md into the project's .claude/skills/discover/USAGE.md during discover init.",
+    "status": "pending",
+    "blockedBy": ["1", "2", "3", "4", "5", "6"]
+  }
+]
