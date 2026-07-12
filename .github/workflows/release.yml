@@ -26,13 +26,28 @@ jobs:
       run_id: ${{ steps.find.outputs.run_id }}
       has_artifacts: ${{ steps.find.outputs.has_artifacts }}
     steps:
-      - name: Find successful CI run for this SHA
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Find successful CI run for this merge
         id: find
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')
+          # The merge commit SHA won't match the CI run — CI ran against
+          # the PR head commit. Extract it from the merge's parent.
+          PR_HEAD=$(git rev-parse HEAD^2 2>/dev/null || echo "")
+          SHAS=("${{ github.sha }}")
+          [[ -n "$PR_HEAD" ]] && SHAS+=("$PR_HEAD")
+
+          RUN_ID=""
+          for sha in "${SHAS[@]}"; do
+            RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&status=success&per_page=1" \
+              --jq '.workflow_runs[0].id // empty')
+            [[ -n "$RUN_ID" ]] && break
+          done
+
           if [[ -n "$RUN_ID" ]]; then
             echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
             echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
