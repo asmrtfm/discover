@@ -113,10 +113,11 @@ jobs:
           name: dist-linux-x86_64
           path: dist
 
-      - name: Put built ast-grep on PATH
+      - name: Put built ast-grep and repo bin/ on PATH
         run: |
           tar -xzf dist/ast-grep-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP"/ast-grep-*-linux-x86_64 >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
 
       - name: Verify binary runs
         run: ast-grep --version
