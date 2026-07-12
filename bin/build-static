@@ -12,6 +12,24 @@ set -euo pipefail
 REPO_ROOT="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
 AST_GREP_DIR="$REPO_ROOT/ast-grep"
 
+# Non-interactive mode: --yes / -y flag, or any CI environment
+ASSUME_YES="${ASSUME_YES:-${CI:+1}}"
+
+# aarch64 musl cross toolchain — a glibc cross-gcc cannot produce fully static
+# musl binaries, and cargo also needs an explicit target linker
+MUSL_CROSS_BASE_URL="${MUSL_CROSS_BASE_URL:-https://musl.cc}"
+MUSL_CROSS_NAME=aarch64-linux-musl-cross
+MUSL_CROSS_GCC=aarch64-linux-musl-gcc
+TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-$REPO_ROOT/.toolchains}"
+
+# Let rustc strip every target itself — host strip can't handle cross-arch binaries
+export CARGO_PROFILE_RELEASE_STRIP="${CARGO_PROFILE_RELEASE_STRIP:-symbols}"
+
+apt_install() {
+  [[ -n "${APT_UPDATED:-}" ]] || { sudo apt-get update -qq; APT_UPDATED=1; }
+  sudo apt-get install ${ASSUME_YES:+-y} "$@"
+}
+
 # Supported release targets
 LINUX_X86=x86_64-unknown-linux-musl
 LINUX_ARM=aarch64-unknown-linux-musl
@@ -74,7 +92,11 @@ check_base_prerequisites() {
   # Rust toolchain
   if ! command -v rustup &>/dev/null || ! command -v cargo &>/dev/null; then
     echo "Rust toolchain not found."
-    read -rp "Install Rust via rustup now? [Y/n] " answer
+    if [[ -n "$ASSUME_YES" ]]; then
+      answer=y
+    else
+      read -rp "Install Rust via rustup now? [Y/n] " answer
+    fi
     if [[ "${answer,,}" != "n" ]]; then
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       # shellcheck disable=SC1091
@@ -85,21 +107,25 @@ check_base_prerequisites() {
     fi
   fi
 
-  # C compiler — required by the cc crate for tree-sitter grammar compilation
-  if ! command -v cc &>/dev/null && ! command -v gcc &>/dev/null && ! command -v clang &>/dev/null; then
-    missing+=(build-essential)
-  fi
-
-  # make — used by some tree-sitter grammar build scripts
-  if ! command -v make &>/dev/null; then
-    missing+=(make)
-  fi
+  # C compiler + make — required by the cc crate for tree-sitter grammar
+  # compilation. Not checked on Windows: the msvc target compiles C via cl.exe.
+  case "$HOST_OS" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *)
+      if ! command -v cc &>/dev/null && ! command -v gcc &>/dev/null && ! command -v clang &>/dev/null; then
+        missing+=(build-essential)
+      fi
+      if ! command -v make &>/dev/null; then
+        missing+=(make)
+      fi
+      ;;
+  esac
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     case "$HOST_OS" in
       Linux)
         echo "Installing base build dependencies: ${missing[*]}..."
-        sudo apt-get install "${missing[@]}"
+        apt_install "${missing[@]}"
         ;;
       Darwin)
         if ! xcode-select -p &>/dev/null; then
@@ -128,13 +154,15 @@ check_target_prerequisites() {
     "$LINUX_X86")
       if ! command -v musl-gcc &>/dev/null; then
         echo "Installing musl-tools..."
-        sudo apt-get install musl-tools
+        apt_install musl-tools
       fi
       ;;
     "$LINUX_ARM")
-      if ! dpkg -l | grep -q gcc-aarch64-linux-gnu 2>/dev/null; then
-        echo "Installing gcc-aarch64-linux-gnu..."
-        sudo apt-get install gcc-aarch64-linux-gnu
+      if ! command -v "$MUSL_CROSS_GCC" &>/dev/null \
+        && [[ ! -x "$TOOLCHAIN_DIR/$MUSL_CROSS_NAME/bin/$MUSL_CROSS_GCC" ]]; then
+        echo "Downloading $MUSL_CROSS_NAME toolchain..."
+        mkdir -p "$TOOLCHAIN_DIR"
+        curl -fsSL "$MUSL_CROSS_BASE_URL/$MUSL_CROSS_NAME.tgz" | tar -xz -C "$TOOLCHAIN_DIR"
       fi
       ;;
   esac
@@ -152,11 +180,19 @@ build_target() {
     -p ast-grep
   )
 
-  # musl x86_64 on linux: set CC for the cc crate (tree-sitter C compilation)
+  # musl targets on linux: point the cc crate (tree-sitter C compilation) and
+  # cargo's linker at a musl toolchain
   if [[ "$target" == "$LINUX_X86" && "$HOST_OS" == "Linux" ]]; then
     CC=musl-gcc cargo "${cargo_args[@]}"
   elif [[ "$target" == "$LINUX_ARM" && "$HOST_OS" == "Linux" ]]; then
-    CC=aarch64-linux-gnu-gcc cargo "${cargo_args[@]}"
+    local cross_gcc="$MUSL_CROSS_GCC"
+    command -v "$cross_gcc" &>/dev/null || cross_gcc="$TOOLCHAIN_DIR/$MUSL_CROSS_NAME/bin/$MUSL_CROSS_GCC"
+    CC="$cross_gcc" \
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$cross_gcc" \
+      cargo "${cargo_args[@]}"
+  elif [[ "$target" == "$WINDOWS_X86" ]]; then
+    # help text promises a static CRT; rustc only delivers it when asked
+    RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static" cargo "${cargo_args[@]}"
   else
     cargo "${cargo_args[@]}"
   fi
@@ -180,6 +216,16 @@ build_target() {
 
 targets=()
 
+# --yes may appear alongside targets; strip it before target parsing
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes) ASSUME_YES=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
+
 if [[ $# -eq 0 ]]; then
   targets+=("$(native_target)")
 elif [[ "$1" == "--all" ]]; then
@@ -201,6 +247,8 @@ Options:
   (none)      Build for the current platform
   --all       Build all targets feasible on this host
   --list      Show available and feasible targets
+  -y, --yes   Non-interactive: assume yes for prompts and package installs
+              (implied when the CI environment variable is set)
   -h, --help  Show this help
 
 Targets:
@@ -216,7 +264,8 @@ Prerequisites (auto-installed if missing):
     build-essential (gcc, make) C compiler for tree-sitter grammars
   Linux targets:
     musl-tools                  For x86_64-unknown-linux-musl
-    gcc-aarch64-linux-gnu       For aarch64-unknown-linux-musl
+    aarch64-linux-musl-cross    For aarch64-unknown-linux-musl (fetched from
+                                musl.cc into .toolchains/ if not on PATH)
   macOS:
     Xcode command line tools    Provides clang + make
 EOF
