@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Packages the discover framework (scripts, lang configs, templates) into a
+# versioned release tarball. Binaries are packaged separately by
+# bin/package-release; the release workflow publishes both.
+#
+# Usage:
+#   bin/package-framework                      # version from VERSION file (-dev)
+#   bin/package-framework --version v0.1.42    # exact release tag
+
+REPO_ROOT="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+DIST_DIR="$REPO_ROOT/dist"
+
+# Everything a working installation needs (bin/discover resolves DISCOVER_ROOT
+# relative to itself, so the tree layout must be preserved)
+FRAMEWORK_PATHS=(
+  bin/discover
+  lib
+  langs
+  templates
+  examples
+  README.md
+)
+
+VERSION=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) VERSION="$2"; shift 2 ;;
+    -h|--help)
+      cat <<EOF
+Usage: bin/package-framework [--version vX.Y.Z]
+
+Package the discover framework into a release tarball.
+
+Options:
+  --version TAG  Release tag to stamp (default: v<VERSION file>-dev)
+  -h, --help     Show this help
+
+Output: dist/discover-<version>.tar.gz
+
+The archive root contains a VERSION file with the tag — installers compare it
+against the installed copy for idempotent upgrades.
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+VERSION="${VERSION:-v$(cat "$REPO_ROOT/VERSION")-dev}"
+archive_name="discover-${VERSION#v}"
+staging_dir="$DIST_DIR/.staging/$archive_name"
+
+echo "Packaging discover framework $VERSION"
+
+rm -rf "$staging_dir"
+mkdir -p "$staging_dir"
+
+for path in "${FRAMEWORK_PATHS[@]}"; do
+  if [[ ! -e "$REPO_ROOT/$path" ]]; then
+    echo "ERROR: expected framework path missing: $path" >&2
+    exit 1
+  fi
+  mkdir -p "$staging_dir/$(dirname "$path")"
+  cp -R "$REPO_ROOT/$path" "$staging_dir/$path"
+done
+
+# Version stamp — the installers' idempotency marker
+printf '%s\n' "$VERSION" > "$staging_dir/VERSION"
+
+mkdir -p "$DIST_DIR"
+archive_file="$DIST_DIR/${archive_name}.tar.gz"
+tar -czf "$archive_file" -C "$DIST_DIR/.staging" "$archive_name"
+rm -rf "$DIST_DIR/.staging/$archive_name"
+
+echo "  ✓ $archive_file"
