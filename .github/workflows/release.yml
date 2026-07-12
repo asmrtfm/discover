@@ -8,10 +8,12 @@ name: release
 # stops short of publishing — use it to validate changes to the pipeline.
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
-      - ci-bootstrap # TEMPORARY: pipeline validation branch; remove before merge
   workflow_dispatch:
     inputs:
       dry_run:
@@ -38,16 +40,21 @@ jobs:
         include:
           - os: ubuntu-latest
             targets: x86_64-unknown-linux-musl
+            artifact: dist-linux-x86_64
           # arm64 hosted runners are free for public repos; native musl build
           # avoids depending on musl.cc's flaky cross-toolchain mirror
           - os: ubuntu-24.04-arm
             targets: aarch64-unknown-linux-musl
-          - os: macos-13
+            artifact: dist-linux-aarch64
+          - os: macos-latest
             targets: x86_64-apple-darwin
+            artifact: dist-macos-x86_64
           - os: macos-latest
             targets: aarch64-apple-darwin
+            artifact: dist-macos-aarch64
           - os: windows-latest
             targets: x86_64-pc-windows-msvc
+            artifact: dist-windows-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -88,7 +95,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
+          name: ${{ matrix.artifact }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -103,7 +110,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: dist-ubuntu-latest
+          name: dist-linux-x86_64
           path: dist
 
       - name: Put built ast-grep on PATH
