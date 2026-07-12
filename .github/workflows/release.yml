@@ -42,8 +42,10 @@ jobs:
           # avoids depending on musl.cc's flaky cross-toolchain mirror
           - os: ubuntu-24.04-arm
             targets: aarch64-unknown-linux-musl
+          - os: macos-13
+            targets: x86_64-apple-darwin
           - os: macos-latest
-            targets: x86_64-apple-darwin aarch64-apple-darwin
+            targets: aarch64-apple-darwin
           - os: windows-latest
             targets: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
