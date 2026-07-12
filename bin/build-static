@@ -158,7 +158,13 @@ check_target_prerequisites() {
       fi
       ;;
     "$LINUX_ARM")
-      if ! command -v "$MUSL_CROSS_GCC" &>/dev/null \
+      if [[ "$HOST_ARCH" == "aarch64" ]]; then
+        # Native build (arm64 host) — same musl-tools path as x86_64
+        if ! command -v musl-gcc &>/dev/null; then
+          echo "Installing musl-tools..."
+          apt_install musl-tools
+        fi
+      elif ! command -v "$MUSL_CROSS_GCC" &>/dev/null \
         && [[ ! -x "$TOOLCHAIN_DIR/$MUSL_CROSS_NAME/bin/$MUSL_CROSS_GCC" ]]; then
         echo "Downloading $MUSL_CROSS_NAME toolchain..."
         mkdir -p "$TOOLCHAIN_DIR"
@@ -183,6 +189,8 @@ build_target() {
   # musl targets on linux: point the cc crate (tree-sitter C compilation) and
   # cargo's linker at a musl toolchain
   if [[ "$target" == "$LINUX_X86" && "$HOST_OS" == "Linux" ]]; then
+    CC=musl-gcc cargo "${cargo_args[@]}"
+  elif [[ "$target" == "$LINUX_ARM" && "$HOST_OS" == "Linux" && "$HOST_ARCH" == "aarch64" ]]; then
     CC=musl-gcc cargo "${cargo_args[@]}"
   elif [[ "$target" == "$LINUX_ARM" && "$HOST_OS" == "Linux" ]]; then
     local cross_gcc="$MUSL_CROSS_GCC"

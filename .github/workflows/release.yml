@@ -37,7 +37,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            targets: x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+            targets: x86_64-unknown-linux-musl
+          # arm64 hosted runners are free for public repos; native musl build
+          # avoids depending on musl.cc's flaky cross-toolchain mirror
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
           - os: macos-latest
             targets: x86_64-apple-darwin aarch64-apple-darwin
           - os: windows-latest
