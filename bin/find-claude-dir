@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# find-claude-dir — walk up from CWD looking for .claude, fall back to global.
+#
+# Outputs the absolute path to the first .claude directory found.
+# Search order:
+#   1. $PWD/.claude
+#   2. $PWD/../.claude
+#   3. ... (walk up to /)
+#   4. ${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+
+[[ -n $GLOBAL_CLAUDE_DIR ]] || export CLAUDE_CONFIG_DIR="$HOME/.claude"
+
+d="$(pwd -P)"
+while [[ "$d" != "/" ]]; do
+  if [[ -d "${d}/.claude" ]]; then
+    echo "${d}/.claude"
+    exit 0
+  fi
+  d="$(dirname "$d")"
+done
+
+echo "$GLOBAL_CLAUDE_DIR"
