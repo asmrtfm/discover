@@ -164,6 +164,14 @@ detect_typescript() {
     local pkg="$root/package.json"
     if [ -f "$pkg" ]; then
         DETECTED_PACKAGE="$(jq -r '.name // empty' "$pkg" 2>/dev/null || true)"
+
+        # Detect React projects — react in dependencies or devDependencies
+        local has_react
+        has_react="$(jq -r '(.dependencies.react // .devDependencies.react) // empty' "$pkg" 2>/dev/null || true)"
+        if [ -n "$has_react" ]; then
+            DETECTED_FRAMEWORK="react"
+        fi
+
         # Look for common entry points
         local main
         main="$(jq -r '.main // empty' "$pkg" 2>/dev/null || true)"
@@ -173,7 +181,7 @@ detect_typescript() {
             [ -f "$root/$ts_main" ] && DETECTED_ENTRY="$ts_main"
         fi
         if [ -z "$DETECTED_ENTRY" ]; then
-            for candidate in src/index.ts src/main.ts index.ts; do
+            for candidate in src/index.ts src/main.ts index.ts src/index.tsx src/main.tsx; do
                 if [ -f "$root/$candidate" ]; then
                     DETECTED_ENTRY="$candidate"
                     break
