@@ -1,0 +1,104 @@
+name: ci
+
+# Manual build+test. Use the "Run workflow" button and select your PR branch.
+# Artifacts are retained so the release workflow can reuse them on merge.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: x86_64-unknown-linux-musl
+            artifact: dist-linux-x86_64
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
+            artifact: dist-linux-aarch64
+          - os: macos-latest
+            targets: x86_64-apple-darwin
+            artifact: dist-macos-x86_64
+          - os: macos-latest
+            targets: aarch64-apple-darwin
+            artifact: dist-macos-aarch64
+          - os: windows-latest
+            targets: x86_64-pc-windows-msvc
+            artifact: dist-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('ast-grep/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install modern bash
+        if: runner.os == 'macOS'
+        run: brew install bash
+
+      - name: Syntax-check install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+
+      - name: Build static binaries
+        run: ./bin/build-static --yes ${{ matrix.targets }}
+
+      - name: Package release archives
+        run: ./bin/package-release --version "$(cat VERSION).${GITHUB_RUN_NUMBER}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-linux-x86_64
+          path: dist
+
+      - name: Put built ast-grep and repo bin/ on PATH
+        run: |
+          tar -xzf dist/ast-grep-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP"/ast-grep-*-linux-x86_64 >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+
+      - name: Verify binary runs
+        run: ast-grep --version
+
+      - name: Run test suite
+        run: bash tests/run.sh
