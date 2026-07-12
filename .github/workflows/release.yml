@@ -1,30 +1,17 @@
 name: release
 
-# Every push to main builds static ast-grep binaries for all supported
-# platforms, runs the discover test suite against the freshly built linux
-# binary, and publishes a GitHub Release tagged v<VERSION file>.<run number>.
-#
-# workflow_dispatch runs the same pipeline; with dry_run (the default) it
-# stops short of publishing — use it to validate changes to the pipeline.
+# Runs on merge to main. Reuses artifacts from a successful CI run for the
+# same commit if available. Otherwise does a full build+test before releasing.
 
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Build, package, and test without publishing a release
-        type: boolean
-        default: true
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
-# Serialize runs so run_number-derived tags publish in order
 concurrency:
   group: release
   cancel-in-progress: false
@@ -33,7 +20,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-ci-artifacts:
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+      has_artifacts: ${{ steps.find.outputs.has_artifacts }}
+    steps:
+      - name: Find successful CI run for this SHA
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')
+          if [[ -n "$RUN_ID" ]]; then
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+            echo "Found successful CI run: $RUN_ID"
+          else
+            echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+            echo "No prior CI run found — will do full build"
+          fi
+
   build:
+    needs: check-ci-artifacts
+    if: needs.check-ci-artifacts.outputs.has_artifacts == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -41,8 +52,6 @@ jobs:
           - os: ubuntu-latest
             targets: x86_64-unknown-linux-musl
             artifact: dist-linux-x86_64
-          # arm64 hosted runners are free for public repos; native musl build
-          # avoids depending on musl.cc's flaky cross-toolchain mirror
           - os: ubuntu-24.04-arm
             targets: aarch64-unknown-linux-musl
             artifact: dist-linux-aarch64
@@ -72,13 +81,10 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('ast-grep/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
-      # macOS ships bash 3.2; the build scripts need bash 4+ (declare -A).
-      # Homebrew's bin precedes /bin on runners, so `env bash` resolves to it.
       - name: Install modern bash
         if: runner.os == 'macOS'
         run: brew install bash
 
-      # Nothing else in the pipeline parses PowerShell — catch syntax errors here
       - name: Syntax-check install.ps1
         if: runner.os == 'Windows'
         shell: pwsh
@@ -101,9 +107,9 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-  # Run the discover test suite against the exact linux binary that ships
   test:
-    needs: build
+    needs: [check-ci-artifacts, build]
+    if: needs.check-ci-artifacts.outputs.has_artifacts == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,10 +119,11 @@ jobs:
           name: dist-linux-x86_64
           path: dist
 
-      - name: Put built ast-grep on PATH
+      - name: Put built ast-grep and repo bin/ on PATH
         run: |
           tar -xzf dist/ast-grep-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP"/ast-grep-*-linux-x86_64 >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
 
       - name: Verify binary runs
         run: ast-grep --version
@@ -124,18 +131,50 @@ jobs:
       - name: Run test suite
         run: bash tests/run.sh
 
-  release:
-    needs: [build, test]
+  download-ci-artifacts:
+    needs: check-ci-artifacts
+    if: needs.check-ci-artifacts.outputs.has_artifacts == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    steps:
+      - name: Download artifacts from CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh api "repos/${{ github.repository }}/actions/runs/${{ needs.check-ci-artifacts.outputs.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("dist-")) | "\(.id) \(.name)"' | \
+          while read -r id name; do
+            echo "Downloading $name..."
+            gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > "$name.zip"
+            unzip -o "$name.zip" -d dist/
+            rm "$name.zip"
+          done
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-all
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: [check-ci-artifacts, build, test, download-ci-artifacts]
+    if: always() && (needs.test.result == 'success' || needs.download-ci-artifacts.result == 'success')
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
+        if: needs.check-ci-artifacts.outputs.has_artifacts == 'false'
         with:
           pattern: dist-*
           merge-multiple: true
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        if: needs.check-ci-artifacts.outputs.has_artifacts == 'true'
+        with:
+          name: dist-all
           path: dist
 
       - name: Assemble release assets
@@ -148,9 +187,6 @@ jobs:
           ls -lh dist/
 
       - name: Publish release
-        if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
