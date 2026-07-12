@@ -17,6 +17,16 @@ DISCOVER_ROOT="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Find nearest .claude directory, walking up from $PWD
+find_claude_dir() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        [ -d "$dir/.claude" ] && echo "$dir/.claude" && return 0
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
 # ─────────────────────────────────────────────────────────
 # Auto-detect language from project files
 #
@@ -373,7 +383,8 @@ maybe_install_ctx7() {
 
     command -v npx >/dev/null 2>&1 || return 0
 
-    read -rep "install ctx7 (Context7 doc lookups)? " answer </dev/tty
+    # Interactive offer — skip (default no) without a controlling terminal (CI, pipes)
+    { read -rep "install ctx7 (Context7 doc lookups)? " answer </dev/tty; } 2>/dev/null || return 0
     case "$answer" in
         [Yy]|[Yy][Ee][Ss]) ;;
         *) return 0 ;;
@@ -426,7 +437,8 @@ maybe_inject_openspec() {
         return 0
     fi
 
-    read -rep "install openspec? " answer </dev/tty
+    # Interactive offer — skip (default no) without a controlling terminal (CI, pipes)
+    { read -rep "install openspec? " answer </dev/tty; } 2>/dev/null || return 0
     case "$answer" in
         [Yy]|[Yy][Ee][Ss]) ;;
         *) return 0 ;;
@@ -489,9 +501,9 @@ init_main() {
     # Source lang config to get metadata and function definitions
     source "$lang_config"
 
-    # Find nearest .claude via the global find-claude-dir utility
+    # Find nearest .claude directory
     local claude_dir
-    claude_dir="$(find-claude-dir)" || die "no .claude directory found"
+    claude_dir="$(find_claude_dir)" || die "no .claude directory found"
 
     local project_root
     project_root="$(dirname "$claude_dir")"
