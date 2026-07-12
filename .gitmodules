@@ -1,3 +1,3 @@
 [submodule "ast-grep"]
 	path = ast-grep
-	url = /home/me/Workspaces/asmrtfm/forks/ast-grep
+	url = https://github.com/asmrtfm/ast-grep.git

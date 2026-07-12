@@ -1,0 +1,152 @@
+name: release
+
+# Every push to main builds static ast-grep binaries for all supported
+# platforms, runs the discover test suite against the freshly built linux
+# binary, and publishes a GitHub Release tagged v<VERSION file>.<run number>.
+#
+# workflow_dispatch runs the same pipeline; with dry_run (the default) it
+# stops short of publishing — use it to validate changes to the pipeline.
+
+on:
+  push:
+    branches:
+      - main
+      - ci-bootstrap # TEMPORARY: pipeline validation branch; remove before merge
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, package, and test without publishing a release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Serialize runs so run_number-derived tags publish in order
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: x86_64-unknown-linux-musl
+          # arm64 hosted runners are free for public repos; native musl build
+          # avoids depending on musl.cc's flaky cross-toolchain mirror
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
+          - os: macos-latest
+            targets: x86_64-apple-darwin aarch64-apple-darwin
+          - os: windows-latest
+            targets: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('ast-grep/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # macOS ships bash 3.2; the build scripts need bash 4+ (declare -A).
+      # Homebrew's bin precedes /bin on runners, so `env bash` resolves to it.
+      - name: Install modern bash
+        if: runner.os == 'macOS'
+        run: brew install bash
+
+      # Nothing else in the pipeline parses PowerShell — catch syntax errors here
+      - name: Syntax-check install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+
+      - name: Build static binaries
+        run: ./bin/build-static --yes ${{ matrix.targets }}
+
+      - name: Package release archives
+        run: ./bin/package-release --version "$(cat VERSION).${GITHUB_RUN_NUMBER}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  # Run the discover test suite against the exact linux binary that ships
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-ubuntu-latest
+          path: dist
+
+      - name: Put built ast-grep on PATH
+        run: |
+          tar -xzf dist/ast-grep-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP"/ast-grep-*-linux-x86_64 >> "$GITHUB_PATH"
+
+      - name: Verify binary runs
+        run: ast-grep --version
+
+      - name: Run test suite
+        run: bash tests/run.sh
+
+  release:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Assemble release assets
+        run: |
+          TAG="v$(cat VERSION).${GITHUB_RUN_NUMBER}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          ./bin/package-framework --version "$TAG"
+          cp install.sh install.ps1 dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          ls -lh dist/
+
+      - name: Publish release
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "discover $TAG" \
+            --generate-notes \
+            dist/*

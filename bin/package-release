@@ -114,8 +114,12 @@ for target in "${built_targets[@]}"; do
     fi
     if [[ -f "$src" ]]; then
       cp "$src" "$staging_dir/"
-      # Strip debug symbols for smaller binaries (skip on cross-arch)
-      if [[ -z "${WINDOWS_TARGET[$target]:-}" ]]; then
+      # Strip debug symbols for smaller binaries. Host strip can't process
+      # cross-arch binaries (build-static's CARGO_PROFILE_RELEASE_STRIP covers
+      # those at compile time), so only strip when the target arch matches.
+      host_arch="$(uname -m)"
+      [[ "$host_arch" == "arm64" ]] && host_arch="aarch64"
+      if [[ -z "${WINDOWS_TARGET[$target]:-}" && "$target" == "${host_arch}-"* ]]; then
         strip "$staging_dir/$bin_name" 2>/dev/null || true
       fi
     fi
@@ -126,10 +130,17 @@ for target in "${built_targets[@]}"; do
     cp "$AST_GREP_DIR/LICENSE" "$staging_dir/"
   fi
 
-  # Create archive
+  # Create archive — git-bash on windows runners has 7z but no zip
   if [[ -n "${USE_ZIP[$target]:-}" ]]; then
     archive_file="$DIST_DIR/${archive_name}.zip"
-    (cd "$DIST_DIR/.staging" && zip -r "$archive_file" "$archive_name/")
+    if command -v zip &>/dev/null; then
+      (cd "$DIST_DIR/.staging" && zip -qr "$archive_file" "$archive_name/")
+    elif command -v 7z &>/dev/null; then
+      (cd "$DIST_DIR/.staging" && 7z a -tzip "$archive_file" "$archive_name/" >/dev/null)
+    else
+      echo "ERROR: neither zip nor 7z available to create $archive_file" >&2
+      exit 1
+    fi
     echo "  ✓ $archive_file"
   else
     archive_file="$DIST_DIR/${archive_name}.tar.gz"
@@ -151,10 +162,18 @@ for target in "${built_targets[@]}"; do
   done
 done
 
-# Generate checksums
+# Generate checksums — sha256sum is absent on stock macOS, shasum isn't
+checksum() {
+  if command -v sha256sum &>/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
 echo ""
 echo "Generating checksums..."
-(cd "$DIST_DIR" && sha256sum ast-grep-${VERSION}-*.{tar.gz,zip} 2>/dev/null > "checksums-${VERSION}.sha256" || true)
+archives=()
+for f in "$DIST_DIR"/ast-grep-${VERSION}-*.tar.gz "$DIST_DIR"/ast-grep-${VERSION}-*.zip; do
+  [[ -f "$f" ]] && archives+=("$(basename "$f")")
+done
+(cd "$DIST_DIR" && checksum "${archives[@]}" > "checksums-${VERSION}.sha256")
 echo "  ✓ $DIST_DIR/checksums-${VERSION}.sha256"
 
 # Cleanup staging

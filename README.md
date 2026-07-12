@@ -15,9 +15,38 @@ names can't produce false positives.
 `discover` says a file is dead, it's dead — not "probably unused based on a
 text search."
 
+## Install
+
+One command, idempotent (safe to re-run — it exits cleanly when already
+current, updates in place when a newer release exists).
+
+Linux, macOS, WSL, Git Bash:
+
+```bash
+curl -fsSL https://github.com/asmrtfm/discover/releases/latest/download/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/asmrtfm/discover/releases/latest/download/install.ps1 | iex
+```
+
+This installs the `discover` CLI, statically-linked `ast-grep`/`sg` binaries
+built from the vendored fork (which carries language support upstream lacks),
+and a static `jq` if your system has none — to `~/.local` (or
+`%LOCALAPPDATA%\discover` on Windows). No sudo, no Rust toolchain, no build.
+
+Every push to `main` publishes a new release automatically; re-running the
+installer picks it up. All artifacts are checksum-verified against the
+release's `SHA256SUMS`.
+
 ## Prerequisites
 
+Handled by the installer. If installing by hand instead:
+
 - [ast-grep](https://ast-grep.github.io/) — the structural search engine
+  (use this repo's releases, not upstream — the fork adds languages)
 - [jq](https://jqlang.github.io/jq/) — JSON processing
 - Standard coreutils (`find`, `realpath`, `md5sum`, `sort`)
 
