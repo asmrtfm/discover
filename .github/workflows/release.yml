@@ -150,3 +150,46 @@ jobs:
             --title "discover $TAG" \
             --generate-notes \
             dist/*
+
+  # Prove the release just published actually installs: fetch the RELEASED
+  # installers (not the checkout copies), install, run the tools, and re-run
+  # the installer to confirm idempotency.
+  verify-install:
+    needs: release
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and verify (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          TAG="v$(cat VERSION).${GITHUB_RUN_NUMBER}"
+          export DISCOVER_REPO="$GITHUB_REPOSITORY"
+          curl -fsSL --retry 3 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh" \
+            -o /tmp/install.sh
+          bash /tmp/install.sh --version "$TAG"
+          export PATH="$HOME/.local/bin:$PATH"
+          ast-grep --version
+          discover langs
+          bash /tmp/install.sh --version "$TAG" | grep -q "up to date"
+
+      - name: Install and verify (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Tag = "v" + (Get-Content VERSION -Raw).Trim() + ".$env:GITHUB_RUN_NUMBER"
+          $env:DISCOVER_REPO = $env:GITHUB_REPOSITORY
+          Invoke-WebRequest "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$Tag/install.ps1" -OutFile "$env:TEMP\install.ps1"
+          & "$env:TEMP\install.ps1" -Version $Tag
+          & "$env:LOCALAPPDATA\discover\bin\ast-grep.exe" --version
+          $out = & "$env:TEMP\install.ps1" -Version $Tag 6>&1 | Out-String
+          if ($out -notmatch "up to date") { throw "installer not idempotent: $out" }
