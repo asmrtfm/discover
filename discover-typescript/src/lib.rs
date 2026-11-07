@@ -35,15 +35,24 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use ts::{Directive, is_script};
 
-const USAGE: &str = "  resolve <specifier> [--from <file>]    Resolve import specifier to repo-relative path
-  inspect <file> [--imports] [--exports] [--dynamic] [--entities]
-           [--depth names|signatures|full]
-  definition <file> <symbol>             Find where a symbol used in <file> is defined
-  usages <pattern> [--live-only]         Find all references to an ast-grep pattern
-  usages --assets <asset-path>           Check if an asset is referenced in live code
+/// TypeScript's own commands, continuing the help page's COMMANDS section in its manual-page layout.
+const USAGE: &str = "       resolve SPECIFIER [--from FILE]
+              Print the repo-relative path an import specifier resolves to, relative to FILE when given.
 
-environment:
-  DISCOVER_ENTRY=\"<file> ...\"            Entry point(s), overriding discover.conf and the defaults";
+       inspect FILE [--imports] [--exports] [--dynamic] [--entities] [--depth names|signatures|full]
+              Print FILE's imports, exports, dynamic imports and top-level entities as JSON; with none of these flags, all of them. --depth signatures adds each entity's header line and --depth full its whole declaration; --entities --depth names prints only the entity names, one per line.
+
+       definition FILE SYMBOL
+              Print where SYMBOL, as used in FILE, is defined.
+
+       usages PATTERN
+              Print every match of the ast-grep PATTERN in the sources as JSON, each file parsed with its own grammar; with --live-only, only matches in live files.
+
+       usages --assets PATH
+              Print the references to the asset at PATH as JSON: imports and require() calls of it, and URL strings for files under public/.
+
+       attributes CLASS FILE
+              List the instance fields of CLASS, declared in FILE, one name per line; with --verbose, a JSON array of { FIELD: TYPE } objects. CLASS can also be a Mongoose model, whose schema fields are listed.";
 
 /// How the discover binary identifies and runs TypeScript.
 pub const LANGUAGE: cli::Language = cli::Language {
@@ -70,6 +79,8 @@ pub fn main() -> ExitCode {
       "definition" => cmd_definition(graph, args),
       "usages" => cmd_usages(graph, args),
       "attributes" => cmd_attributes(graph, args),
+      // endpoints is Dart only for now: no output, exit 1.
+      "endpoints" => Ok(1),
       _ => unreachable!("checked against COMMANDS"),
     }
   })

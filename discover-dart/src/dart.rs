@@ -361,6 +361,83 @@ pub fn attributes(root: &DartRoot, class: &str) -> Option<Vec<Attribute>> {
   Some(found)
 }
 
+/// A stretch of a file that the code inside it belongs to, so a call written there can be traced to the callers of what encloses it: a top-level entity, or one member of a class, enum, mixin or extension.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Scope {
+  /// The enclosing top-level entity's name.
+  pub entity: String,
+  /// The member's name (method, getter, setter or field), or None for the entity itself and for constructors, which are called by the entity's name.
+  pub member: Option<String>,
+  /// Whether the member is annotated `@override`, so it is called through a supertype (or by the framework, like `build`) rather than by its name.
+  pub overrides: bool,
+  /// The 1-based first line, leading annotations included.
+  pub start: usize,
+  /// The 1-based last line.
+  pub end: usize,
+}
+
+/// Every top-level entity's scope and every member's scope, in document order. A member's scope lies inside its entity's, so the innermost scope around a line is the one with the fewest lines.
+pub fn scopes(root: &DartRoot) -> Vec<Scope> {
+  // Gives a node's 1-based first and last lines.
+  let lines = |node: &DartNode<'_>| (node.start_pos().line() + 1, node.end_pos().line() + 1);
+  let mut found = Vec::new();
+  for node in root.root().children() {
+    let kind = node.kind();
+    // Classes, enums, mixins, extensions and typedefs, with the members in their bodies.
+    if let Some((_, keyword)) = DECLARATION_KINDS.iter().find(|(k, _)| *k == kind.as_ref()) {
+      let entity = declaration_entity(&node, keyword).name;
+      let (start, end) = lines(&node);
+      found.push(Scope { entity: entity.clone(), member: None, overrides: false, start, end });
+      // Every member container (class_body, enum_body, extension_body) holds class_member nodes.
+      let members = node.field("body").into_iter().flat_map(|body| body.children().filter(|c| c.kind() == "class_member").collect::<Vec<_>>());
+      for member in members {
+        let (start, end) = lines(&member);
+        found.push(Scope {
+          entity: entity.clone(),
+          member: member_name(&member),
+          overrides: is_override(&member),
+          start,
+          end,
+        });
+      }
+    } else if kind == "function_declaration" {
+      // A top-level function, its annotations and body included.
+      let name = node.field("signature").and_then(|s| s.field("name")).map_or_else(|| "?".to_string(), |n| n.text().to_string());
+      let (start, end) = lines(&node);
+      found.push(Scope { entity: name, member: None, overrides: false, start, end });
+    } else if kind == "top_level_variable_declaration" {
+      // One scope per declared name, each spanning the whole declaration.
+      let (start, end) = lines(&node);
+      for declarator in node.dfs().filter(|n| matches!(n.kind().as_ref(), "initialized_identifier" | "static_final_declaration") && is_top_level_variable(n)) {
+        found.push(Scope { entity: variable_entity(&declarator).name, member: None, overrides: false, start, end });
+      }
+    }
+  }
+  found
+}
+
+/// The name a class member is called by: a method's, getter's or setter's name, or a field's first declared name. None for constructors, which are called by the class's name, and for anything else.
+fn member_name(member: &DartNode<'_>) -> Option<String> {
+  // The first named declaration in pre-order is the member's own, ahead of anything in its body.
+  member.dfs().find_map(|n| match n.kind().as_ref() {
+    "function_signature" | "getter_signature" | "setter_signature" => Some(n.field("name").map(|name| name.text().to_string())),
+    "constructor_signature" | "factory_constructor_signature" | "redirecting_factory_constructor_signature" | "constant_constructor_signature" => Some(None),
+    "initialized_identifier" | "static_final_declaration" => {
+      let name: String = n.text().chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').collect();
+      Some((!name.is_empty()).then_some(name))
+    }
+    _ => None,
+  })?
+}
+
+/// Whether a class member carries `@override`, which sits either directly in the class_member or in its method_declaration.
+fn is_override(member: &DartNode<'_>) -> bool {
+  member
+    .children()
+    .flat_map(|c| std::iter::once(c.clone()).chain(c.children().collect::<Vec<_>>()))
+    .any(|n| n.kind() == "annotation" && n.text().trim() == "@override")
+}
+
 /// The 1-based lines, ascending and without duplicates, where a pattern matches outside the file's directives. Used to find where an importer references an entity by name: a `show Foo` combinator names Foo without using it.
 pub fn references(root: &DartRoot, pattern: &Pattern) -> Vec<usize> {
   let lines: std::collections::BTreeSet<usize> = root

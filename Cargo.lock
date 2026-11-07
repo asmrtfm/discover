@@ -14,6 +14,7 @@ dependencies = [
 [[package]]
 name = "ast-grep-core"
 version = "0.43.0"
+source = "git+https://github.com/asmrtfm/ast-grep?branch=main#fc6cf4ab38c9d47dac31a7cdf0d54cb34bc8fb78"
 dependencies = [
  "bit-set",
  "regex",
@@ -24,6 +25,7 @@ dependencies = [
 [[package]]
 name = "ast-grep-language"
 version = "0.43.0"
+source = "git+https://github.com/asmrtfm/ast-grep?branch=main#fc6cf4ab38c9d47dac31a7cdf0d54cb34bc8fb78"
 dependencies = [
  "ast-grep-core",
  "ignore",
@@ -150,6 +152,7 @@ dependencies = [
  "ast-grep-language",
  "discover-core",
  "ignore",
+ "regex",
  "serde",
  "serde_json",
 ]

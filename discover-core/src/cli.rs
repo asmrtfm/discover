@@ -52,6 +52,8 @@ const COMMANDS: &[&str] = &[
   "usages",
   // Dart and TypeScript only for now; the other languages accept it and exit 1 without output.
   "attributes",
+  // Dart only for now; the other languages accept it and exit 1 without output.
+  "endpoints",
 ];
 
 /// The workspace version and the time of the build, written into the binary
@@ -100,7 +102,7 @@ pub struct Language {
   pub entry_defaults: &'static str,
   /// Runs this language's navigator.
   pub main: fn() -> ExitCode,
-  /// The help text for this language's own commands, printed after the shared help.
+  /// The help text for this language's own commands, which continues the shared COMMANDS section: entries indented 7 columns, their descriptions 14, each paragraph on one line.
   pub usage: &'static str,
 }
 
@@ -172,14 +174,15 @@ fn help(langs: &[Language]) -> ! {
     .or_else(|| detect_lang(langs, &args).map(str::to_string));
   // Builds the page for the known language, or for all of them.
   let text = match name.as_deref().and_then(|name| langs.iter().find(|lang| lang.name == name)) {
-    // Ends the shared help with this language's commands.
-    Some(lang) => format!("{}\n{}", shared_usage(&format!("discover --lang={}", lang.name)), lang.usage),
-    // Ends the shared help with each language's commands, headed by the flag that selects it.
+    // Continues the shared commands with this language's, then the footer.
+    Some(lang) => usage_page(&format!("discover --lang={}", lang.name), lang.usage),
+    // Follows the shared commands with a section of each language's, headed by its name and the flag that selects it, then the footer.
     None => {
       let mut text = shared_usage("discover");
       for lang in langs {
-        text.push_str(&format!("\n\n{} commands (--lang={}):\n{}", lang.name, lang.name, lang.usage));
+        text.push_str(&format!("\n\n{} COMMANDS (--lang={})\n{}", lang.name.to_uppercase(), lang.name, lang.usage));
       }
+      text.push_str(&format!("\n\n{USAGE_FOOTER}"));
       text
     }
   };
@@ -304,8 +307,8 @@ fn run<L: Lang>(
   }
   let command = SUBCOMMAND.get().map_or("", String::as_str);
   if command.is_empty() && !rebuild {
-    // Prints the shared help, then the language's own commands.
-    eprintln!("{}\n{usage}", shared_usage(L::NAME));
+    // Prints the help page: the shared part, the language's own commands, then the footer.
+    eprintln!("{}", usage_page(L::NAME, usage));
     return Ok(1);
   }
 
@@ -338,49 +341,98 @@ fn run<L: Lang>(
   }
 }
 
-/// Returns the help page's synopsis, description, global flags, language detection and the commands implemented in this file. Every navigator prints it before its own commands, so the commands section comes last.
+/// Returns the help page up to and including the commands every language shares: NAME, SYNOPSIS, DESCRIPTION, OPTIONS and the start of COMMANDS. A language's own commands follow it, then [`USAGE_FOOTER`]. Laid out like a manual page: section headings at the margin, text indented 7 columns, entry descriptions 14; paragraphs are single lines, left for the terminal to wrap.
 fn shared_usage(name: &str) -> String {
-  // Fills the binary's name into the shared help text.
+  // Fills the command, with its --lang= when one is known, into the synopsis.
   format!(
-    "synopsis:
-  {name} [global flags] <command> [args]
+    "NAME
+       discover - navigate a codebase through its import graph
 
-description:
-  Navigates a project through its import graph: resolves imports, inspects files, finds definitions, importers and usages, and sorts files into live and dead.
+SYNOPSIS
+       {name} [OPTION]... COMMAND [ARG]...
+       discover config
 
-  Live means reachable. Starting from the entry points, discover follows imports forward; every file it reaches is live. A file is live as soon as one live file imports it, whether or not anything it defines is used. live-files, is-live and --live-only all use this list.
+DESCRIPTION
+       discover resolves imports, inspects files, finds definitions, importers and usages, and sorts source files into live and dead. Each file is parsed once and what is learned is kept in caches, which are rebuilt when a file is added or removed or the entry points change.
 
-  Dead is confirmed from the opposite direction. trace starts at the file and walks its importers backward, through their importers and so on, looking for a chain that ends at an entry point. A file with no such chain is dead. dead-files runs this backward walk over every source file and prints a DISAGREEMENT line for each file where its verdict differs from the live list. trace on a given file goes deeper: it also checks which of the file's entities each importer uses, and calls the file dead when no live importer uses any of them.
+       A file is live when it is reachable. Starting from the entry points, discover follows imports forward, and every file it reaches is live, whether or not anything it defines is used. live-files, is-live and --live-only use this list.
 
-global flags (allowed anywhere on the command line):
-  --rebuild-cache                        Wipe and rebuild all caches before running command
-  --no-rebuild                           Use the caches on disk even if stale (builds only missing ones)
-  --live-only                            Limit usages to live files
-  --strict                               Treat a skipped path as an error, so nothing runs (importers, trace, prune)
-  -v, --verbose                          Print more detail where a command supports it
-  -V, --version                          Print the version and build time
-  --lang=<lang>                          Use this language (dart, java, kotlin or typescript) instead of detecting it
+       Dead is confirmed from the opposite direction. Starting at a file, discover walks its importers backward, through their importers and so on, looking for a chain that ends at an entry point; a file with no such chain is dead. dead-files runs this walk over every source file and prints a DISAGREEMENT line for each file where its verdict differs from the live list. trace goes further for the files it is given: it also checks which of the file's entities each importer uses, and calls the file dead when no live importer uses any of them.
 
-language detection, used without --lang; the first that gives an answer wins:
-  1. discover.conf                       A JSON object mapping project directories to languages, read from ./discover.conf, then $XDG_CONFIG_HOME/discover.conf or ~/.config/discover.conf
-  2. File arguments                      The extension of the first file argument with a known extension
-  3. Manifests                           A manifest in the current directory, such as pubspec.yaml or package.json
-  4. Source scan                         The most common source file extension in the project
+       Without --lang, the language is the first answer from: the lang key for the current directory in discover.conf (see FILES); the extension of the first argument with a known source extension; a manifest in the current directory, such as pubspec.yaml or package.json; the most common source file extension in the project.
 
-commands:
-  live-files                             List all live files
-  dead-files [--rebuild]                 List all dead files, found by the backward walk
-  is-live <file>                         Check if a file is live
-  importers <files ...>                  Find all files that import <file>
-                                         A path that doesn't exist is skipped with a warning; with --strict, it is an error and nothing runs.
-  trace <files ...>                      Show which of the entities in <file> are used by its importers, and whether <file> is dead
-                                         A path that doesn't exist is skipped with a warning; with --strict, it is an error and nothing runs. A path that isn't a source file is always skipped with a warning.
-  prune <files ...>                      Remove deleted files' paths from the caches, so the deletion doesn't trigger a rebuild on the next run
-                                         A path that still exists is skipped with a warning; with --strict, it is an error and nothing runs. A path that isn't in the caches is always skipped with a warning.
-  attributes <class> <file>              List the instance fields of <class>, defined in <file>, one name per line; with --verbose, a JSON array of {{ <field>: <type> }} objects
-                                         Dart and TypeScript only for now; other languages print nothing and exit 1. In TypeScript/JavaScript, <class> can also be a Mongoose model, whose schema fields are listed.",
-    name = name
+OPTIONS
+       Options are recognized anywhere on the command line.
+
+       --lang=LANG
+              Use the navigator for LANG (dart, java, kotlin or typescript) instead of detecting it.
+
+       --rebuild-cache
+              Delete and rebuild every cache before running COMMAND. Without a COMMAND, only rebuild.
+
+       --no-rebuild
+              Use the caches on disk even when they are stale; only missing caches are built. Cannot be combined with --rebuild-cache.
+
+       --live-only
+              Limit usages to live files.
+
+       --strict
+              For importers, trace and prune: make a FILE that would be skipped with a warning an error instead, so nothing runs.
+
+       -v, --verbose
+              Print more detail where a command supports it.
+
+       -h, --help
+              Print this help and exit. With a known language, only that language's commands are listed; otherwise every language's are.
+
+       -V, --version
+              Print the version and build time and exit.
+
+COMMANDS
+       config
+              Write a commented ./discover.conf for the current directory, naming the detected language and every language's default entry points. An existing discover.conf is left alone. Must be the first argument.
+
+       live-files
+              List every live file, one per line.
+
+       dead-files [--rebuild]
+              List every dead file, one per line, found by the backward walk. --rebuild rebuilds the dead-files cache first.
+
+       is-live FILE
+              Print LIVE: FILE or DEAD: FILE.
+
+       importers FILE...
+              List the files that import each FILE, one per line. With more than one FILE, each line is TARGET:IMPORTER. A FILE that doesn't exist is skipped with a warning.
+
+       trace FILE...
+              Print one JSON document per FILE: its entities; its importers, each with the entities it uses and tagged active (a live importer that uses them), stale (a live importer that uses none) or zombie (a dead importer); and whether FILE is dead. A FILE that doesn't exist is skipped with a warning, and so, even with --strict, is one that isn't a source file.
+
+       prune FILE...
+              Remove deleted files from the caches, so the deletion doesn't trigger a rebuild on the next run. A FILE that still exists is skipped with a warning, and so, even with --strict, is one the caches don't mention."
   )
+}
+
+/// The end of the help page, after a language's own commands: ENVIRONMENT and FILES, which hold for every language.
+const USAGE_FOOTER: &str = "ENVIRONMENT
+       DISCOVER_ENTRY=\"FILE...\"
+              Entry points for this run, repo-relative and separated by whitespace, used instead of discover.conf's and the language's defaults.
+
+       CACHE_DIR
+              Where the caches are kept, instead of ./tmp.
+
+       XDG_CONFIG_HOME
+              The directory of the user's discover.conf, instead of ~/.config.
+
+FILES
+       ./discover.conf, $XDG_CONFIG_HOME/discover.conf
+              A YAML (or JSON) mapping from project directories to their settings: lang, the navigator to run, and entries, the repo-relative files where the program starts, which replace the language's defaults. The first file with an entry for the current directory is used. discover config writes a commented one.
+
+       ./tmp/
+              The caches, unless CACHE_DIR is set.";
+
+/// The whole help page for one language: the shared part, the language's own commands, then the footer.
+fn usage_page(name: &str, usage: &str) -> String {
+  format!("{}\n\n{usage}\n\n{USAGE_FOOTER}", shared_usage(name))
 }
 
 /// Returns the strings whose existence as a file equals `constraint`, and prints a warning containing `msg` for each of the others.

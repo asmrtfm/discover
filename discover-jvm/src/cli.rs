@@ -15,15 +15,21 @@ use std::collections::BTreeSet;
 use std::process::ExitCode;
 
 /// The help text for the commands implemented in this crate, which core prints after its shared help.
-pub const USAGE: &str = "  resolve <import> [--from <file>]       Resolve an import (or, with --from, a name) to file(s)
-  inspect <file> [--package] [--imports] [--entities]
-           [--depth names|signatures|full]
-  definition <file> <symbol>             Find where a symbol used in <file> is defined
-  usages <pattern> [--live-only]         Find all references to an ast-grep pattern
-  usages --assets <asset-path>           Check if an asset is referenced in live code
+/// The JVM languages' own commands, continuing the help page's COMMANDS section in its manual-page layout.
+pub const USAGE: &str = "       resolve IMPORT [--from FILE]
+              Print the file or files declaring IMPORT (com.example.Foo or com.example.*). With --from, IMPORT is a simple name, resolved as FILE sees it.
 
-environment:
-  DISCOVER_ENTRY=\"<file> ...\"            Entry point(s), overriding discover.conf and the defaults";
+       inspect FILE [--package] [--imports] [--entities] [--depth names|signatures|full]
+              Print FILE's package, imports and top-level entities as JSON; with none of these flags, all of them. --depth signatures adds each entity's header line and --depth full its whole declaration; --entities --depth names prints only the entity names, one per line.
+
+       definition FILE SYMBOL
+              Print where SYMBOL, as used in FILE, is defined.
+
+       usages PATTERN
+              Print every match of the ast-grep PATTERN in the sources as JSON; with --live-only, only matches in live files.
+
+       usages --assets PATH
+              Print the references to the asset at PATH in live code as JSON.";
 
 /// Runs the navigator for language `J`.
 pub fn main<J: Jvm>() -> ExitCode {
@@ -40,6 +46,8 @@ pub fn main<J: Jvm>() -> ExitCode {
       "usages" => cmd_usages(graph, args),
       // attributes is Dart only for now: no output, exit 1.
       "attributes" => Ok(1),
+      // endpoints is Dart only for now: no output, exit 1.
+      "endpoints" => Ok(1),
       _ => unreachable!("checked against COMMANDS"),
     },
   )

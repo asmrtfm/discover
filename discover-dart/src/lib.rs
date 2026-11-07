@@ -17,9 +17,11 @@
 //!   usages <pattern> [--live-only] [-v|--verbose]
 //!   usages --assets <asset-path>
 //!   attributes <class> <file>
+//!   endpoints [<url-regex> ...] [--all]
 
 mod common;
 pub mod dart;
+pub mod endpoints;
 mod graph;
 mod project;
 mod usages;
@@ -36,18 +38,27 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "  resolve <uri> [--from <file>]          Resolve import URI to repo-relative path
-  inspect <file> [--imports] [--exports] [--parts] [--entities]
-           [--depth names|signatures|full]
-  definition <symbol> [<file>] [-v|--verbose] [-p|--pretty]
-                                         Find where a symbol used in <file> is defined;
-                                         without <file>, every definition in the project
-                                         (--verbose adds each definition's code;
-                                         --pretty prints the code as written, not JSON)
-  usages <pattern> [--live-only] [-v|--verbose]
-                                         Find all references to an ast-grep pattern
-                                         (--verbose keeps the symbol's own definition)
-  usages --assets <asset-path>           Check if an asset is referenced in live code";
+/// Dart's own commands, continuing the help page's COMMANDS section in its manual-page layout.
+const USAGE: &str = "       resolve URI [--from FILE]
+              Print the repo-relative path a directive URI resolves to, relative to FILE when given.
+
+       inspect FILE [--imports] [--exports] [--parts] [--entities] [--depth names|signatures|full]
+              Print FILE's imports, exports, parts and top-level entities as JSON; with none of these flags, all of them. --depth signatures adds each entity's header line and --depth full its whole declaration; --entities --depth names prints only the entity names, one per line.
+
+       definition SYMBOL [FILE] [-p|--pretty]
+              Print where SYMBOL, as used in FILE, is defined: among FILE's own entities, then its imports (following re-exports), then its parts. Without FILE, print every definition of SYMBOL in the project, generated files included. --verbose adds each definition's code; --pretty prints a FILE:LINE KIND SYMBOL header followed by the code as written, instead of JSON.
+
+       usages PATTERN
+              Print every match of the ast-grep PATTERN under lib/ as JSON; with --live-only, only matches in live files. The symbol's own definitions are left out unless --verbose is given.
+
+       usages --assets PATH
+              Print the live references to the asset at PATH as JSON: through static String constants that hold it, and as string literals.
+
+       attributes CLASS FILE
+              List the instance fields of CLASS, declared in FILE, one name per line; with --verbose, a JSON array of { FIELD: TYPE } objects.
+
+       endpoints [REGEX]... [--all]
+              Print CALLER URL for every file on the call stack of each API request whose URL, as written in the source, matches any REGEX (unanchored); with no REGEX, every request. Requests are Retrofit endpoint annotations, prefixed with their client's baseUrl; string literals starting with an API root ($rootURL, $postsRoute, $...Root or /api/); and absolute http(s) URLs passed to get, post, put, patch or delete. Only live files are walked; --all walks dead files too.";
 
 /// How the discover binary identifies and runs Dart.
 pub const LANGUAGE: cli::Language = cli::Language {
@@ -74,6 +85,7 @@ pub fn main() -> ExitCode {
       "definition" => cmd_definition(graph, args),
       "usages" => cmd_usages(graph, args),
       "attributes" => cmd_attributes(graph, args),
+      "endpoints" => cmd_endpoints(graph, args),
       _ => unreachable!("checked against COMMANDS"),
     }
   })
@@ -113,6 +125,19 @@ fn cmd_attributes(graph: &Graph, args: &[String]) -> Result<u8, String> {
     // Plain text, one name per line.
     attributes.iter().for_each(|a| out(&a.name));
   }
+  Ok(0)
+}
+
+// ─────────────────────────────────────────────────────────
+// endpoints — `<file> <url>` for every file on the call
+// stack of each selected API request
+// ─────────────────────────────────────────────────────────
+fn cmd_endpoints(graph: &Graph, args: &[String]) -> Result<u8, String> {
+  // --all walks dead files too; every other argument is a regex that selects URLs.
+  let all = args.iter().any(|a| a == "--all");
+  let filters: Vec<String> = args.iter().filter(|a| *a != "--all").cloned().collect();
+  let lines = endpoints::endpoints(graph, &filters, all)?;
+  lines.iter().for_each(|l| out(l));
   Ok(0)
 }
 
