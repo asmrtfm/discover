@@ -1,4 +1,4 @@
-//! `endpoints`: every file on the call stack of each API request, as `<file> <url>` lines. The requests are found the way malsi's bin/api-urls finds them; each one is attributed to the scope it is written in (see [`dart::scopes`]), and the stack is walked up from there: to the scopes in the same file that reference it, and through the importers index (the data `trace` reads) to the importers that use the scope's entity and, for a method, call that method by name.
+//! `endpoints`: the file each API request is made in, as `<url> <file>` lines; with `verbose`, every file on the request's call stack. The requests are found the way malsi's bin/api-urls finds them; each one is attributed to the scope it is written in (see [`dart::scopes`]), and the stack is walked up from there: to the scopes in the same file that reference it, and through the importers index (the data `trace` reads) to the importers that use the scope's entity and, for a method, call that method by name.
 
 use crate::dart::{self, DartRoot, Scope};
 use crate::graph::Graph;
@@ -263,8 +263,8 @@ impl Walker<'_> {
   }
 }
 
-/// `endpoints [<url-regex> ...] [--all]`: one `<file> <url>` line per file on the call stack of each request whose URL, as written in the source, any of the regexes matches (every request when none are given), sorted and without duplicates. Only live files are walked unless `all` is set.
-pub fn endpoints(graph: &Graph, patterns: &[String], all: bool) -> Result<Vec<String>, String> {
+/// `endpoints [<url-regex> ...] [--all] [-v|--verbose]`: one `<url> <file>` line per request whose URL, as written in the source, any of the regexes matches (every request when none are given), sorted and without duplicates. The file is the one the request is made in; with `verbose`, there is one line for every file on the request's call stack. Only live files are walked unless `all` is set.
+pub fn endpoints(graph: &Graph, patterns: &[String], all: bool, verbose: bool) -> Result<Vec<String>, String> {
   // Compiles the selectors up front, so a bad one fails before any work is done.
   let filters: Vec<Regex> = patterns.iter().map(|p| Regex::new(p).map_err(|e| format!("invalid regex {p:?}: {e}"))).collect::<Result<_, _>>()?;
   let index = graph.importers()?;
@@ -289,8 +289,13 @@ pub fn endpoints(graph: &Graph, patterns: &[String], all: bool) -> Result<Vec<St
       continue;
     }
     for (line, url) in sites {
+      // Without verbose, the file the request is made in is the only one listed.
+      if !verbose {
+        lines.insert(format!("{url} {file}"));
+        continue;
+      }
       for caller in walker.stack(&file, line) {
-        lines.insert(format!("{caller} {url}"));
+        lines.insert(format!("{url} {caller}"));
       }
     }
   }

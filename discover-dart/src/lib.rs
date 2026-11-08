@@ -17,7 +17,7 @@
 //!   usages <pattern> [--live-only] [-v|--verbose]
 //!   usages --assets <asset-path>
 //!   attributes <class> <file>
-//!   endpoints [<url-regex> ...] [--all]
+//!   endpoints [<url-regex> ...] [--all] [-v|--verbose]
 
 mod common;
 pub mod dart;
@@ -57,8 +57,8 @@ const USAGE: &str = "       resolve URI [--from FILE]
        attributes CLASS FILE
               List the instance fields of CLASS, declared in FILE, one name per line; with --verbose, a JSON array of { FIELD: TYPE } objects.
 
-       endpoints [REGEX]... [--all]
-              Print CALLER URL for every file on the call stack of each API request whose URL, as written in the source, matches any REGEX (unanchored); with no REGEX, every request. Requests are Retrofit endpoint annotations, prefixed with their client's baseUrl; string literals starting with an API root ($rootURL, $postsRoute, $...Root or /api/); and absolute http(s) URLs passed to get, post, put, patch or delete. Only live files are walked; --all walks dead files too.";
+       endpoints [REGEX]... [--all] [-v|--verbose]
+              Print URL FILE for each API request whose URL, as written in the source, matches any REGEX (unanchored), where FILE is the file the request is made in; with no REGEX, every request. With --verbose, print a line for every file on the request's call stack. Requests are Retrofit endpoint annotations, prefixed with their client's baseUrl; string literals starting with an API root ($rootURL, $postsRoute, $...Root or /api/); and absolute http(s) URLs passed to get, post, put, patch or delete. Only live files are walked; --all walks dead files too.";
 
 /// How the discover binary identifies and runs Dart.
 pub const LANGUAGE: cli::Language = cli::Language {
@@ -129,14 +129,17 @@ fn cmd_attributes(graph: &Graph, args: &[String]) -> Result<u8, String> {
 }
 
 // ─────────────────────────────────────────────────────────
-// endpoints — `<file> <url>` for every file on the call
-// stack of each selected API request
+// endpoints — `<url> <file>` for the file each selected
+// API request is made in, or with --verbose every file on
+// its call stack
 // ─────────────────────────────────────────────────────────
 fn cmd_endpoints(graph: &Graph, args: &[String]) -> Result<u8, String> {
   // --all walks dead files too; every other argument is a regex that selects URLs.
   let all = args.iter().any(|a| a == "--all");
   let filters: Vec<String> = args.iter().filter(|a| *a != "--all").cloned().collect();
-  let lines = endpoints::endpoints(graph, &filters, all)?;
+  // -v/--verbose is global, so cli has already consumed it.
+  let verbose = cli::VERBOSE.load(std::sync::atomic::Ordering::Relaxed);
+  let lines = endpoints::endpoints(graph, &filters, all, verbose)?;
   lines.iter().for_each(|l| out(l));
   Ok(0)
 }
