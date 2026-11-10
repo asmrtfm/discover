@@ -20,4 +20,5 @@ discover-core = { path = "../discover-core" }
 discover-dart = { path = "../discover-dart" }
 discover-java = { path = "../discover-java" }
 discover-kotlin = { path = "../discover-kotlin" }
+discover-ruby = { path = "../discover-ruby" }
 discover-typescript = { path = "../discover-typescript" }

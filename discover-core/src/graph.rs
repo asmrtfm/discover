@@ -57,6 +57,11 @@ pub trait Lang {
   /// Names of a file's top-level entities, in declaration order.
   fn entity_names(&self, path: &Path) -> Vec<String>;
 
+  /// Whether an importer row with this directive passes the target's entities on to the importer's own importers (Dart's `export`, Ruby's superclass and mixins), which `trace` reports as `transitive`.
+  fn is_transitive(directive: &str) -> bool {
+    directive.split(',').any(|d| d == "export")
+  }
+
   /// Whether a file is source code that `trace` can follow. Assets are not;
   /// `usages --assets` looks those up.
   fn is_source(&self, _path: &Path) -> bool {

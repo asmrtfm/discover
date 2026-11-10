@@ -5,8 +5,8 @@ use discover_core::cli::{LANG, Language, parse_args, write_config};
 // Imports the type main returns as the process's exit status.
 use std::process::ExitCode;
 
-/// Lists every language this binary can run.
-const LANGS: &[Language] = &[discover_dart::LANGUAGE, discover_java::LANGUAGE, discover_kotlin::LANGUAGE, discover_typescript::LANGUAGE];
+/// Lists every language this binary can run. Manifest detection takes the first match, so Ruby comes before TypeScript: a Rails app's root often holds a package.json beside its Gemfile.
+const LANGS: &[Language] = &[discover_dart::LANGUAGE, discover_java::LANGUAGE, discover_kotlin::LANGUAGE, discover_ruby::LANGUAGE, discover_typescript::LANGUAGE];
 
 fn main() -> ExitCode {
   // Handles `discover config`, which needs no language or project graph.

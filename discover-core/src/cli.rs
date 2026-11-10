@@ -50,7 +50,7 @@ const COMMANDS: &[&str] = &[
   "trace",
   "prune",
   "usages",
-  // Dart and TypeScript only for now; the other languages accept it and exit 1 without output.
+  // Dart, TypeScript and Ruby only for now; the other languages accept it and exit 1 without output.
   "attributes",
   // Dart only for now; the other languages accept it and exit 1 without output.
   "endpoints",
@@ -359,13 +359,13 @@ DESCRIPTION
 
        Dead is confirmed from the opposite direction. Starting at a file, discover walks its importers backward, through their importers and so on, looking for a chain that ends at an entry point; a file with no such chain is dead. dead-files runs this walk over every source file and prints a DISAGREEMENT line for each file where its verdict differs from the live list. trace goes further for the files it is given: it also checks which of the file's entities each importer uses, and calls the file dead when no live importer uses any of them.
 
-       Without --lang, the language is the first answer from: the lang key for the current directory in discover.conf (see FILES); the extension of the first argument with a known source extension; a manifest in the current directory, such as pubspec.yaml or package.json; the most common source file extension in the project.
+       Without --lang, the language is the first answer from: the lang key for the current directory in discover.conf (see FILES); the extension of the first argument with a known source extension; a manifest in the current directory, such as pubspec.yaml, Gemfile or package.json; the most common source file extension in the project.
 
 OPTIONS
        Options are recognized anywhere on the command line.
 
        --lang=LANG
-              Use the navigator for LANG (dart, java, kotlin or typescript) instead of detecting it.
+              Use the navigator for LANG (dart, java, kotlin, ruby or typescript) instead of detecting it.
 
        --rebuild-cache
               Delete and rebuild every cache before running COMMAND. Without a COMMAND, only rebuild.
@@ -794,8 +794,9 @@ struct TracedRow {
   uri: String,
   entities_used: Vec<EntityUse>,
   status: &'static str,
-  /// Present (true) when the importer exports the target, passing its
-  /// entities on to its own importers.
+  /// Present (true) when the importer passes the target's entities on to
+  /// its own importers (it exports, inherits from or mixes in the target);
+  /// see [`Lang::is_transitive`].
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   transitive: bool,
 }
@@ -863,7 +864,7 @@ fn cmd_trace<L: Lang>(graph: &Graph<L>, args: &[String]) -> Result<u8, String> {
           uri: row.uri.clone(),
           entities_used: row.entities_used.clone(),
           status,
-          transitive: row.directive.split(',').any(|d| d == "export"),
+          transitive: L::is_transitive(&row.directive),
         }
       })
       .collect();
