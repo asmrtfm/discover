@@ -146,6 +146,11 @@ impl Lang for DartLang {
     self.entity_names_with_generated(path)
   }
 
+  // A leading underscore makes a name private to its library (the file and its parts); the language enforces it.
+  fn is_private(name: &str) -> bool {
+    name.starts_with('_')
+  }
+
   // ─────────────────────────────────────────────────────────
   // live files — breadth-first reachability from the entries
   // over import, export and part directives

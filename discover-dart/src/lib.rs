@@ -12,7 +12,7 @@
 //!   dead-files [--rebuild]
 //!   is-live <file>
 //!   importers [--strict] <files ...>
-//!   trace [--strict] <files ...>
+//!   trace [--strict] [-v|--verbose] <files ...>
 //!   prune [--strict] <files ...>
 //!   usages <pattern> [--live-only] [-v|--verbose]
 //!   usages --assets <asset-path>

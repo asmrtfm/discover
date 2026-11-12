@@ -62,6 +62,11 @@ pub trait Lang {
     directive.split(',').any(|d| d == "export")
   }
 
+  /// Whether the language makes an entity with this name invisible to other files (Dart's leading `_`), so no importer can use it. `trace` lists such entities only with -v/--verbose.
+  fn is_private(_name: &str) -> bool {
+    false
+  }
+
   /// Whether a file is source code that `trace` can follow. Assets are not;
   /// `usages --assets` looks those up.
   fn is_source(&self, _path: &Path) -> bool {

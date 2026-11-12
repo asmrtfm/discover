@@ -404,8 +404,8 @@ COMMANDS
        importers FILE...
               List the files that import each FILE, one per line. With more than one FILE, each line is TARGET:IMPORTER. A FILE that doesn't exist is skipped with a warning.
 
-       trace FILE...
-              Print one JSON document per FILE: its entities; its importers, each with the entities it uses and tagged active (a live importer that uses them), stale (a live importer that uses none) or zombie (a dead importer); and whether FILE is dead. A FILE that doesn't exist is skipped with a warning, and so, even with --strict, is one that isn't a source file.
+       trace [-v|--verbose] FILE...
+              Print one JSON document per FILE: its entities, leaving out those private to it (in Dart, names starting with _) unless --verbose is given; its importers, each with the entities it uses and tagged active (a live importer that uses them), stale (a live importer that uses none) or zombie (a dead importer); and whether FILE is dead. A FILE that doesn't exist is skipped with a warning, and so, even with --strict, is one that isn't a source file.
 
        prune FILE...
               Remove deleted files from the caches, so the deletion doesn't trigger a rebuild on the next run. A FILE that still exists is skipped with a warning, and so, even with --strict, is one the caches don't mention."
@@ -818,7 +818,7 @@ fn cmd_trace<L: Lang>(graph: &Graph<L>, args: &[String]) -> Result<u8, String> {
   // Rejects a call with no file paths.
   if args.is_empty() {
     // Returns the usage message as the error.
-    return Err(format!("usage: {} trace [--strict] <files ...>", L::NAME));
+    return Err(format!("usage: {} trace [--strict] [-v|--verbose] <files ...>", L::NAME));
   }
   // Names the failure in the warning for a path that isn't a file.
   let msg = "does not exist";
@@ -841,7 +841,11 @@ fn cmd_trace<L: Lang>(graph: &Graph<L>, args: &[String]) -> Result<u8, String> {
       continue;
     }
     // Reads the names of the entities the file declares.
-    let entities = graph.entity_names(path);
+    let mut entities = graph.entity_names(path);
+    // Drops the private ones, which no importer can use, unless -v/--verbose asks for every entity.
+    if !VERBOSE.load(Ordering::Relaxed) {
+      entities.retain(|name| !L::is_private(name));
+    }
     // Builds a tagged row for each importer stored under this file in the index.
     let mut importers: Vec<TracedRow> = index
       // Looks up this file's importer rows, using the argument as the key.
