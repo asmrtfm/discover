@@ -45,7 +45,7 @@ const USAGE: &str = "       resolve SPECIFIER [--from FILE]
        definition FILE SYMBOL
               Print where SYMBOL, as used in FILE, is defined.
 
-       usages PATTERN
+       usages PATTERN [--live-only]
               Print every match of the ast-grep PATTERN in the sources as JSON, each file parsed with its own grammar; with --live-only, only matches in live files.
 
        usages --assets PATH

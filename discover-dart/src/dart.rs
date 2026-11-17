@@ -11,7 +11,7 @@ use ast_grep_core::{AstGrep, Node, Pattern};
 use ast_grep_language::Dart;
 
 pub type DartRoot = AstGrep<StrDoc<Dart>>;
-type DartNode<'r> = Node<'r, StrDoc<Dart>>;
+pub(crate) type DartNode<'r> = Node<'r, StrDoc<Dart>>;
 
 pub fn parse(src: &str) -> DartRoot {
   Dart.ast_grep(src)
@@ -83,11 +83,6 @@ impl Facts {
     }
   }
 
-  /// The first definition (by line) with this name.
-  pub fn definition(&self, name: &str) -> Option<&Definition> {
-    self.definitions.iter().find(|d| d.name == name)
-  }
-
   pub fn entity_names(&self) -> Vec<String> {
     self.entities.iter().map(|e| e.name.clone()).collect()
   }
@@ -95,7 +90,7 @@ impl Facts {
 
 /// Declaration node kinds and the keyword each is reported as, in the order
 /// the bash version concatenated them (ties on a line keep this order).
-const DECLARATION_KINDS: [(&str, &str); 5] = [
+pub(crate) const DECLARATION_KINDS: [(&str, &str); 5] = [
   ("class_declaration", "class"),
   ("enum_declaration", "enum"),
   ("mixin_declaration", "mixin"),
@@ -198,7 +193,7 @@ fn unquote(literal: &str) -> &str {
 ///   const/final:    top_level_variable_declaration > static_final_declaration_list > static_final_declaration
 ///   var/typed/late: top_level_variable_declaration > initialized_identifier_list > initialized_identifier
 /// Direct-parent chains only, so locals inside a top-level initializer are not picked up.
-fn is_top_level_variable(node: &DartNode<'_>) -> bool {
+pub(crate) fn is_top_level_variable(node: &DartNode<'_>) -> bool {
   let list_kind = match node.kind().as_ref() {
     "initialized_identifier" => "initialized_identifier_list",
     _ => "static_final_declaration_list",
@@ -210,7 +205,7 @@ fn is_top_level_variable(node: &DartNode<'_>) -> bool {
     .is_some_and(|decl| decl.kind() == "top_level_variable_declaration")
 }
 
-fn first_line(text: &str) -> &str {
+pub(crate) fn first_line(text: &str) -> &str {
   text.split('\n').next().unwrap_or("")
 }
 
@@ -224,7 +219,7 @@ fn has_keyword(line: &str, keyword: &str) -> bool {
   })
 }
 
-fn declaration_entity(node: &DartNode<'_>, keyword: &'static str) -> Entity {
+pub(crate) fn declaration_entity(node: &DartNode<'_>, keyword: &'static str) -> Entity {
   let full = node.text().to_string();
   // A typedef's name is a bare type_identifier (or, old-style, an identifier)
   // rather than a `name` field.
@@ -284,7 +279,7 @@ fn member_definition(node: &DartNode<'_>, kind: &'static str) -> Definition {
   }
 }
 
-fn variable_entity(node: &DartNode<'_>) -> Entity {
+pub(crate) fn variable_entity(node: &DartNode<'_>) -> Entity {
   let full = node.text().to_string();
   // The declarator's text starts with the declared name.
   let name: String = full
@@ -300,144 +295,6 @@ fn variable_entity(node: &DartNode<'_>) -> Entity {
   }
 }
 
-/// One instance field of a class, as `attributes` reports it.
-#[derive(Debug)]
-pub struct Attribute {
-  /// The declared type as written (`String`, `int?`, `List<String>`), or `dynamic` when the declaration has none.
-  pub ty: String,
-  pub name: String,
-}
-
-/// The instance fields declared in the body of class `class`, in source order, or None when the file declares no such class. Static fields, getters, setters, methods and constructors are not attributes. A declaration that names several fields (`int? a, b;`) gives one attribute per name.
-///
-/// TODO: add a flag that also lists inherited fields, from the class's `extends` superclass and `with` mixins, resolved through the import graph.
-pub fn attributes(root: &DartRoot, class: &str) -> Option<Vec<Attribute>> {
-  // Finds the class declaration with the requested name.
-  let decl = root
-    .root()
-    .dfs()
-    .find(|n| n.kind() == "class_declaration" && n.field("name").is_some_and(|name| name.text() == class))?;
-  // Holds the fields found so far.
-  let mut found = Vec::new();
-  // A class without a body (`class A = B with C;`) declares no fields.
-  let Some(body) = decl.field("body") else {
-    return Some(found);
-  };
-  // Visits each member of the body; members are wrapped in class_member nodes.
-  for member in body.children().filter(|c| c.kind() == "class_member") {
-    // Field declarations are `declaration` nodes; methods, getters and setters are method_declaration.
-    for declaration in member.children().filter(|c| c.kind() == "declaration") {
-      // Skips static fields, which belong to the class rather than its instances.
-      if declaration.children().any(|c| c.kind() == "static") {
-        continue;
-      }
-      // Finds the list of declared names; constructors and other declarations have none.
-      let Some(list) = declaration
-        .children()
-        .find(|c| matches!(c.kind().as_ref(), "initialized_identifier_list" | "static_final_declaration_list"))
-      else {
-        continue;
-      };
-      // Reads the declared type, which is a direct child of the declaration.
-      let ty = declaration
-        .children()
-        .find(|c| c.kind() == "type")
-        .map_or_else(|| "dynamic".to_string(), |t| t.text().to_string());
-      // Reports each declarator in the list under the shared type.
-      for declarator in list
-        .children()
-        .filter(|c| matches!(c.kind().as_ref(), "initialized_identifier" | "static_final_declaration"))
-      {
-        // The declarator's text starts with the declared name.
-        let text = declarator.text();
-        let name: String = text.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').collect();
-        found.push(Attribute {
-          ty: ty.clone(),
-          name: if name.is_empty() { "?".to_string() } else { name },
-        });
-      }
-    }
-  }
-  Some(found)
-}
-
-/// A stretch of a file that the code inside it belongs to, so a call written there can be traced to the callers of what encloses it: a top-level entity, or one member of a class, enum, mixin or extension.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Scope {
-  /// The enclosing top-level entity's name.
-  pub entity: String,
-  /// The member's name (method, getter, setter or field), or None for the entity itself and for constructors, which are called by the entity's name.
-  pub member: Option<String>,
-  /// Whether the member is annotated `@override`, so it is called through a supertype (or by the framework, like `build`) rather than by its name.
-  pub overrides: bool,
-  /// The 1-based first line, leading annotations included.
-  pub start: usize,
-  /// The 1-based last line.
-  pub end: usize,
-}
-
-/// Every top-level entity's scope and every member's scope, in document order. A member's scope lies inside its entity's, so the innermost scope around a line is the one with the fewest lines.
-pub fn scopes(root: &DartRoot) -> Vec<Scope> {
-  // Gives a node's 1-based first and last lines.
-  let lines = |node: &DartNode<'_>| (node.start_pos().line() + 1, node.end_pos().line() + 1);
-  let mut found = Vec::new();
-  for node in root.root().children() {
-    let kind = node.kind();
-    // Classes, enums, mixins, extensions and typedefs, with the members in their bodies.
-    if let Some((_, keyword)) = DECLARATION_KINDS.iter().find(|(k, _)| *k == kind.as_ref()) {
-      let entity = declaration_entity(&node, keyword).name;
-      let (start, end) = lines(&node);
-      found.push(Scope { entity: entity.clone(), member: None, overrides: false, start, end });
-      // Every member container (class_body, enum_body, extension_body) holds class_member nodes.
-      let members = node.field("body").into_iter().flat_map(|body| body.children().filter(|c| c.kind() == "class_member").collect::<Vec<_>>());
-      for member in members {
-        let (start, end) = lines(&member);
-        found.push(Scope {
-          entity: entity.clone(),
-          member: member_name(&member),
-          overrides: is_override(&member),
-          start,
-          end,
-        });
-      }
-    } else if kind == "function_declaration" {
-      // A top-level function, its annotations and body included.
-      let name = node.field("signature").and_then(|s| s.field("name")).map_or_else(|| "?".to_string(), |n| n.text().to_string());
-      let (start, end) = lines(&node);
-      found.push(Scope { entity: name, member: None, overrides: false, start, end });
-    } else if kind == "top_level_variable_declaration" {
-      // One scope per declared name, each spanning the whole declaration.
-      let (start, end) = lines(&node);
-      for declarator in node.dfs().filter(|n| matches!(n.kind().as_ref(), "initialized_identifier" | "static_final_declaration") && is_top_level_variable(n)) {
-        found.push(Scope { entity: variable_entity(&declarator).name, member: None, overrides: false, start, end });
-      }
-    }
-  }
-  found
-}
-
-/// The name a class member is called by: a method's, getter's or setter's name, or a field's first declared name. None for constructors, which are called by the class's name, and for anything else.
-fn member_name(member: &DartNode<'_>) -> Option<String> {
-  // The first named declaration in pre-order is the member's own, ahead of anything in its body.
-  member.dfs().find_map(|n| match n.kind().as_ref() {
-    "function_signature" | "getter_signature" | "setter_signature" => Some(n.field("name").map(|name| name.text().to_string())),
-    "constructor_signature" | "factory_constructor_signature" | "redirecting_factory_constructor_signature" | "constant_constructor_signature" => Some(None),
-    "initialized_identifier" | "static_final_declaration" => {
-      let name: String = n.text().chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').collect();
-      Some((!name.is_empty()).then_some(name))
-    }
-    _ => None,
-  })?
-}
-
-/// Whether a class member carries `@override`, which sits either directly in the class_member or in its method_declaration.
-fn is_override(member: &DartNode<'_>) -> bool {
-  member
-    .children()
-    .flat_map(|c| std::iter::once(c.clone()).chain(c.children().collect::<Vec<_>>()))
-    .any(|n| n.kind() == "annotation" && n.text().trim() == "@override")
-}
-
 /// The 1-based lines, ascending and without duplicates, where a pattern matches outside the file's directives. Used to find where an importer references an entity by name: a `show Foo` combinator names Foo without using it.
 pub fn references(root: &DartRoot, pattern: &Pattern) -> Vec<usize> {
   let lines: std::collections::BTreeSet<usize> = root
@@ -451,35 +308,4 @@ pub fn references(root: &DartRoot, pattern: &Pattern) -> Vec<usize> {
     .map(|m| m.get_node().start_pos().line() + 1)
     .collect();
   lines.into_iter().collect()
-}
-
-/// One pattern match, shaped like ast-grep's JSON output fields the bash
-/// version read: the 1-based line, the match's first source line with one
-/// leading space removed (jq's `ltrimstr(" ")`), and the full source lines.
-pub struct Hit {
-  pub line: usize,
-  pub text: String,
-  pub lines: String,
-  /// Text of the requested metavariable, when one was asked for.
-  pub capture: Option<String>,
-}
-
-pub fn find_all(root: &DartRoot, pattern: &Pattern, capture: Option<&str>) -> Vec<Hit> {
-  root
-    .root()
-    .find_all(pattern)
-    .map(|m| {
-      let ctx = m.display_context(0, 0);
-      let lines = format!("{}{}{}", ctx.leading, ctx.matched, ctx.trailing);
-      let first = first_line(&lines);
-      let text = first.strip_prefix(' ').unwrap_or(first).to_string();
-      let capture = capture.and_then(|var| m.get_env().get_match(var).map(|n| n.text().to_string()));
-      Hit {
-        line: m.get_node().start_pos().line() + 1,
-        text,
-        lines,
-        capture,
-      }
-    })
-    .collect()
 }

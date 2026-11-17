@@ -2,7 +2,7 @@
 //! `--assets` lookup of what references an asset path.
 
 use crate::common::project_facts;
-use crate::dart::{self, Facts, Hit};
+use crate::dart::{self, DartRoot, Facts};
 use crate::graph::Graph;
 use ast_grep_core::Pattern;
 use ast_grep_language::Dart;
@@ -15,6 +15,37 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+
+/// One pattern match, shaped like ast-grep's JSON output fields the bash
+/// version read: the 1-based line, the match's first source line with one
+/// leading space removed (jq's `ltrimstr(" ")`), and the full source lines.
+pub struct Hit {
+  pub line: usize,
+  pub text: String,
+  pub lines: String,
+  /// Text of the requested metavariable, when one was asked for.
+  pub capture: Option<String>,
+}
+
+pub fn find_all(root: &DartRoot, pattern: &Pattern, capture: Option<&str>) -> Vec<Hit> {
+  root
+    .root()
+    .find_all(pattern)
+    .map(|m| {
+      let ctx = m.display_context(0, 0);
+      let lines = format!("{}{}{}", ctx.leading, ctx.matched, ctx.trailing);
+      let first = dart::first_line(&lines);
+      let text = first.strip_prefix(' ').unwrap_or(first).to_string();
+      let capture = capture.and_then(|var| m.get_env().get_match(var).map(|n| n.text().to_string()));
+      Hit {
+        line: m.get_node().start_pos().line() + 1,
+        text,
+        lines,
+        capture,
+      }
+    })
+    .collect()
+}
 
 /// The files `ast-grep run -l dart <pattern> lib/` searches: every *.dart
 /// under lib/ (generated files included), skipping hidden and gitignored
@@ -41,7 +72,7 @@ fn search(graph: &Graph, pattern: &Pattern, capture: Option<&str>) -> Vec<(Strin
     };
     let file = path.to_string_lossy();
     let file = file.strip_prefix(&root).unwrap_or(&file).to_string();
-    dart::find_all(&dart::parse(&src), pattern, capture)
+    find_all(&dart::parse(&src), pattern, capture)
       .into_iter()
       .map(|hit| (file.clone(), hit))
       .collect()
@@ -127,7 +158,7 @@ pub fn asset_usages(graph: &Graph, asset: &str) -> Result<AssetRefs, String> {
     let Ok(src) = fs::read_to_string(graph.project.root.join(&decl_file)) else {
       continue;
     };
-    let Some(class) = dart::find_all(&dart::parse(&src), &class_pattern, Some("NAME"))
+    let Some(class) = find_all(&dart::parse(&src), &class_pattern, Some("NAME"))
       .into_iter()
       .find_map(|h| h.capture)
     else {

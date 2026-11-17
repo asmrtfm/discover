@@ -43,7 +43,7 @@ const USAGE: &str = "       resolve SPECIFIER [--from FILE] [--require|--require
        trace [--include-upstream] [-v|--verbose] FILE...
               Ruby's trace, which replaces the shared one above. For each importer, entities_used lists where FILE's entities are used through it: in the importer itself; when the importer is a module, in every class and module downstream of it (those that include, extend, prepend or inherit it, through any number of such links); and when the importer or anything downstream of it is a class, at every callsite of that class in the codebase, ERB templates included. An entry found in another file has that file and a via list, the inheritance chain from the importer to it; each entry is printed on one line. A row is stale only when none of these finds a use. The constant named in a superclass or include/extend/prepend statement is not a use. --include-upstream also counts the entities FILE pulls in through its own requires, superclasses and mixins. --verbose also lists every file reached through transitive links (requires, superclasses, mixins) as a row of its own, with a via list of the files between it and FILE, nearest FILE first.
 
-       usages PATTERN
+       usages PATTERN [--live-only]
               Print every match of the ast-grep PATTERN in the sources as JSON; with --live-only, only matches in live files.
 
        usages --assets PATH

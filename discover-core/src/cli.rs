@@ -24,9 +24,6 @@ static STRICT: AtomicBool = AtomicBool::new(false);
 /// Holds whether `-v` or `--verbose` was found in the command-line arguments. Starts false.
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 
-/// Holds whether `--live-only` was found in the command-line arguments. Starts false. Commands that list files read it to keep only live ones.
-pub static LIVE_ONLY: AtomicBool = AtomicBool::new(false);
-
 /// Holds the language named by `--lang=<lang>`, which the discover binary routes on.
 pub static LANG: OnceLock<String> = OnceLock::new();
 
@@ -186,7 +183,8 @@ fn help(langs: &[Language]) -> ! {
       text
     }
   };
-  out(&text);
+  // Prints the page filled to the line width, as man would.
+  out(&fill(&text));
   // Exits without running anything else.
   std::process::exit(0)
 }
@@ -248,8 +246,6 @@ pub fn parse_args(langs: &[Language]) {
       "-v" | "--verbose" => VERBOSE.store(true, Ordering::Relaxed),
       // Prints the help page and exits; no project or caches involved.
       "-h" | "--help" => help(langs),
-      // Records that file listings should keep only live files.
-      "--live-only" => LIVE_ONLY.store(true, Ordering::Relaxed),
       // Records the language, keeping the first one given.
       flag if flag.starts_with("--lang=") => {
         // Stores the text after `--lang=`; a later --lang is ignored.
@@ -307,8 +303,8 @@ fn run<L: Lang>(
   }
   let command = SUBCOMMAND.get().map_or("", String::as_str);
   if command.is_empty() && !rebuild {
-    // Prints the help page: the shared part, the language's own commands, then the footer.
-    eprintln!("{}", usage_page(L::NAME, usage));
+    // Prints the help page, filled to the line width: the shared part, the language's own commands, then the footer.
+    eprintln!("{}", fill(&usage_page(L::NAME, usage)));
     return Ok(1);
   }
 
@@ -341,7 +337,7 @@ fn run<L: Lang>(
   }
 }
 
-/// Returns the help page up to and including the commands every language shares: NAME, SYNOPSIS, DESCRIPTION, OPTIONS and the start of COMMANDS. A language's own commands follow it, then [`USAGE_FOOTER`]. Laid out like a manual page: section headings at the margin, text indented 7 columns, entry descriptions 14; paragraphs are single lines, left for the terminal to wrap.
+/// Returns the help page up to and including the commands every language shares: NAME, SYNOPSIS, DESCRIPTION, OPTIONS and the start of COMMANDS. A language's own commands follow it, then [`USAGE_FOOTER`]. Laid out like a manual page: section headings at the margin, text indented 7 columns, entry descriptions 14; paragraphs are single lines here, and [`fill`] breaks them to the line width when the page is printed.
 fn shared_usage(name: &str) -> String {
   // Fills the command, with its --lang= when one is known, into the synopsis.
   format!(
@@ -353,11 +349,23 @@ SYNOPSIS
        discover config
 
 DESCRIPTION
-       discover resolves imports, inspects files, finds definitions, importers and usages, and sorts source files into live and dead. Each file is parsed once and what is learned is kept in caches, which are rebuilt when a file is added or removed or the entry points change.
+       discover analyzes the codebase and caches the results, so later runs are fast. The caches rebuild on their own when files are added or removed or the entry points change. Use --rebuild-cache to force a rebuild, or --no-rebuild to use the existing caches as they are.
 
-       A file is live when it is reachable. Starting from the entry points, discover follows imports forward, and every file it reaches is live, whether or not anything it defines is used. live-files, is-live and --live-only use this list.
+       Files and their importers are classified as:
 
-       Dead is confirmed from the opposite direction. Starting at a file, discover walks its importers backward, through their importers and so on, looking for a chain that ends at an entry point; a file with no such chain is dead. dead-files runs this walk over every source file and prints a DISAGREEMENT line for each file where its verdict differs from the live list. trace goes further for the files it is given: it also checks which of the file's entities each importer uses, and calls the file dead when no live importer uses any of them.
+       \"live\"
+              Reachable from an entry point through imports. It says nothing about whether the file's code is used. Reported by live-files and is-live.
+
+       \"dead\"
+              Unreachable: no chain of importers leads back to an entry point. Reported by dead-files, which also prints a DISAGREEMENT line for any file the two checks classify differently.
+
+       \"stale\"
+              An importer that is \"live\" but uses none of the file's entities. Reported by trace.
+
+       \"zombie\"
+              An importer that is \"dead\". Reported by trace.
+
+       trace also calls a file \"dead\" when every importer is \"stale\" or \"zombie\".
 
        Without --lang, the language is the first answer from: the lang key for the current directory in discover.conf (see FILES); the extension of the first argument with a known source extension; a manifest in the current directory, such as pubspec.yaml, Gemfile or package.json; the most common source file extension in the project.
 
@@ -372,9 +380,6 @@ OPTIONS
 
        --no-rebuild
               Use the caches on disk even when they are stale; only missing caches are built. Cannot be combined with --rebuild-cache.
-
-       --live-only
-              Limit usages to live files.
 
        --strict
               For importers, trace and prune: make a FILE that would be skipped with a warning an error instead, so nothing runs.
@@ -433,6 +438,46 @@ FILES
 /// The whole help page for one language: the shared part, the language's own commands, then the footer.
 fn usage_page(name: &str, usage: &str) -> String {
   format!("{}\n\n{usage}\n\n{USAGE_FOOTER}", shared_usage(name))
+}
+
+/// Fills a help page to the line width the way man(1) renders a page: each line keeps its leading indent, and one longer than the width is broken between words into lines that repeat that indent. The width is $MANWIDTH, else $COLUMNS, else 80, as man uses.
+fn fill(text: &str) -> String {
+  // Reads the width from the environment, falling back to 80 columns.
+  let width = ["MANWIDTH", "COLUMNS"]
+    .iter()
+    .find_map(|var| std::env::var(var).ok().and_then(|value| value.parse::<usize>().ok()))
+    .filter(|&width| width > 0)
+    .unwrap_or(80);
+  // Holds the filled lines.
+  let mut filled = Vec::new();
+  for line in text.lines() {
+    // Keeps a line that already fits exactly as written.
+    if line.chars().count() <= width {
+      filled.push(line.to_string());
+      continue;
+    }
+    // Splits off the indent, which every continuation line repeats.
+    let body = line.trim_start();
+    let indent = &line[..line.len() - body.len()];
+    // Holds the line being filled and whether it has a word on it yet.
+    let mut current = indent.to_string();
+    let mut has_word = false;
+    for word in body.split_whitespace() {
+      // Starts a new line when the word would run past the width; a word longer than the width gets a line to itself.
+      if has_word && current.chars().count() + 1 + word.chars().count() > width {
+        filled.push(std::mem::replace(&mut current, indent.to_string()));
+        has_word = false;
+      }
+      // Separates the word from the one before it on the same line.
+      if has_word {
+        current.push(' ');
+      }
+      current.push_str(word);
+      has_word = true;
+    }
+    filled.push(current);
+  }
+  filled.join("\n")
 }
 
 /// Returns the strings whose existence as a file equals `constraint`, and prints a warning containing `msg` for each of the others.
@@ -561,15 +606,16 @@ pub enum UsagesArgs<'a> {
   Assets(&'a str),
 }
 
-/// `usages <pattern> [--live-only]` or `usages --assets <asset-path>`. `--live-only` is a global flag, read from [`LIVE_ONLY`].
+/// `usages <pattern> [--live-only]` or `usages --assets <asset-path>`.
 pub fn parse_usages<'a, L: Lang>(args: &'a [String]) -> Result<UsagesArgs<'a>, String> {
   let mut pattern = "";
   let mut asset = None;
-  // Reads the global --live-only flag, which parse_args already consumed.
-  let live_only = LIVE_ONLY.load(Ordering::Relaxed);
+  // Holds whether --live-only was given, keeping only matches in live files.
+  let mut live_only = false;
   let mut it = args.iter();
   while let Some(arg) = it.next() {
     match arg.as_str() {
+      "--live-only" => live_only = true,
       "--assets" => {
         asset = Some(
           it.next()

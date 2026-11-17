@@ -132,6 +132,7 @@ dependencies = [
  "discover-dart",
  "discover-java",
  "discover-kotlin",
+ "discover-ruby",
  "discover-typescript",
 ]
 
@@ -186,6 +187,17 @@ dependencies = [
  "ast-grep-language",
  "discover-core",
  "discover-jvm",
+]
+
+[[package]]
+name = "discover-ruby"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "discover-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

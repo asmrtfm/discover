@@ -1,6 +1,6 @@
-//! `endpoints`: the file each API request is made in, as `<url> <file>` lines; with `verbose`, every file on the request's call stack. The requests are found the way malsi's bin/api-urls finds them; each one is attributed to the scope it is written in (see [`dart::scopes`]), and the stack is walked up from there: to the scopes in the same file that reference it, and through the importers index (the data `trace` reads) to the importers that use the scope's entity and, for a method, call that method by name.
+//! `endpoints`: the file each API request is made in, as `<url> <file>` lines; with `verbose`, every file on the request's call stack. The requests are found the way malsi's bin/api-urls finds them; each one is attributed to the scope it is written in (see [`scopes`]), and the stack is walked up from there: to the scopes in the same file that reference it, and through the importers index (the data `trace` reads) to the importers that use the scope's entity and, for a method, call that method by name.
 
-use crate::dart::{self, DartRoot, Scope};
+use crate::dart::{self, DECLARATION_KINDS, DartNode, DartRoot};
 use crate::graph::Graph;
 use ast_grep_core::Pattern;
 use ast_grep_language::Dart;
@@ -20,6 +20,83 @@ static RETROFIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"@(?:GET|POST|P
 static CONSTANT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bconst\s+\w+\s*=").expect("valid"));
 /// A request method called with an absolute URL, up to the end of its scheme; the opening quote is group 1.
 static ABSOLUTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\.(?:get|post|put|patch|delete)(?:<[^>]*>)?\(\s*(["'])https?://"#).expect("valid"));
+
+/// A stretch of a file that the code inside it belongs to, so a call written there can be traced to the callers of what encloses it: a top-level entity, or one member of a class, enum, mixin or extension.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Scope {
+  /// The enclosing top-level entity's name.
+  pub entity: String,
+  /// The member's name (method, getter, setter or field), or None for the entity itself and for constructors, which are called by the entity's name.
+  pub member: Option<String>,
+  /// Whether the member is annotated `@override`, so it is called through a supertype (or by the framework, like `build`) rather than by its name.
+  pub overrides: bool,
+  /// The 1-based first line, leading annotations included.
+  pub start: usize,
+  /// The 1-based last line.
+  pub end: usize,
+}
+
+/// Every top-level entity's scope and every member's scope, in document order. A member's scope lies inside its entity's, so the innermost scope around a line is the one with the fewest lines.
+pub fn scopes(root: &DartRoot) -> Vec<Scope> {
+  // Gives a node's 1-based first and last lines.
+  let lines = |node: &DartNode<'_>| (node.start_pos().line() + 1, node.end_pos().line() + 1);
+  let mut found = Vec::new();
+  for node in root.root().children() {
+    let kind = node.kind();
+    // Classes, enums, mixins, extensions and typedefs, with the members in their bodies.
+    if let Some((_, keyword)) = DECLARATION_KINDS.iter().find(|(k, _)| *k == kind.as_ref()) {
+      let entity = dart::declaration_entity(&node, keyword).name;
+      let (start, end) = lines(&node);
+      found.push(Scope { entity: entity.clone(), member: None, overrides: false, start, end });
+      // Every member container (class_body, enum_body, extension_body) holds class_member nodes.
+      let members = node.field("body").into_iter().flat_map(|body| body.children().filter(|c| c.kind() == "class_member").collect::<Vec<_>>());
+      for member in members {
+        let (start, end) = lines(&member);
+        found.push(Scope {
+          entity: entity.clone(),
+          member: member_name(&member),
+          overrides: is_override(&member),
+          start,
+          end,
+        });
+      }
+    } else if kind == "function_declaration" {
+      // A top-level function, its annotations and body included.
+      let name = node.field("signature").and_then(|s| s.field("name")).map_or_else(|| "?".to_string(), |n| n.text().to_string());
+      let (start, end) = lines(&node);
+      found.push(Scope { entity: name, member: None, overrides: false, start, end });
+    } else if kind == "top_level_variable_declaration" {
+      // One scope per declared name, each spanning the whole declaration.
+      let (start, end) = lines(&node);
+      for declarator in node.dfs().filter(|n| matches!(n.kind().as_ref(), "initialized_identifier" | "static_final_declaration") && dart::is_top_level_variable(n)) {
+        found.push(Scope { entity: dart::variable_entity(&declarator).name, member: None, overrides: false, start, end });
+      }
+    }
+  }
+  found
+}
+
+/// The name a class member is called by: a method's, getter's or setter's name, or a field's first declared name. None for constructors, which are called by the class's name, and for anything else.
+fn member_name(member: &DartNode<'_>) -> Option<String> {
+  // The first named declaration in pre-order is the member's own, ahead of anything in its body.
+  member.dfs().find_map(|n| match n.kind().as_ref() {
+    "function_signature" | "getter_signature" | "setter_signature" => Some(n.field("name").map(|name| name.text().to_string())),
+    "constructor_signature" | "factory_constructor_signature" | "redirecting_factory_constructor_signature" | "constant_constructor_signature" => Some(None),
+    "initialized_identifier" | "static_final_declaration" => {
+      let name: String = n.text().chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').collect();
+      Some((!name.is_empty()).then_some(name))
+    }
+    _ => None,
+  })?
+}
+
+/// Whether a class member carries `@override`, which sits either directly in the class_member or in its method_declaration.
+fn is_override(member: &DartNode<'_>) -> bool {
+  member
+    .children()
+    .flat_map(|c| std::iter::once(c.clone()).chain(c.children().collect::<Vec<_>>()))
+    .any(|n| n.kind() == "annotation" && n.text().trim() == "@override")
+}
 
 /// The index of the quote that closes a string literal whose body starts at `from`, with each `${...}` interpolation consumed whole so that quotes nested inside it don't end the literal. None when the literal doesn't close on this line.
 fn closing_quote(line: &[u8], from: usize, quote: u8) -> Option<usize> {
@@ -150,7 +227,7 @@ impl Walker<'_> {
       .or_insert_with(|| {
         let src = fs::read_to_string(root.join(file)).ok()?;
         let root = dart::parse(&src);
-        let scopes = dart::scopes(&root);
+        let scopes = scopes(&root);
         Some(Parsed { root, scopes })
       })
       .as_ref()
