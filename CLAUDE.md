@@ -15,8 +15,8 @@ discover-core/src/
 │   └── live_files.rs, dead_files.rs, is_live.rs, importers.rs, trace.rs, prune.rs, config.rs
 └── help/
     ├── mod.rs          # the `Help` trait, page assembly, fill
-    ├── page.rs         # NAME, SYNOPSIS, DESCRIPTION, OPTIONS, ENVIRONMENT, FILES
-    └── <subcommand>.rs # one per subcommand: its generic help entry
+    ├── page.rs         # the top-level page: NAME, SYNOPSIS, DESCRIPTION, OPTIONS, COMMANDS summaries, ENVIRONMENT, FILES
+    └── <subcommand>.rs # one per subcommand: its generic page and its summary
 
 discover-<lang>/src/
 ├── lib.rs              # module declarations, LANGUAGE, dispatch
@@ -26,7 +26,7 @@ discover-<lang>/src/
 ├── commands/<subcommand>.rs   # one per subcommand the language supports
 └── help/
     ├── mod.rs          # `impl Help`: supported subcommands, plus which entries are overridden
-    └── <subcommand>.rs # only where this language has something specific to say
+    └── <subcommand>.rs # only where this language has something specific to say on that subcommand's page
 ```
 
 `discover-jvm` follows the language layout for everything Java and Kotlin share; `discover-java` and `discover-kotlin` hold only what differs.
@@ -42,10 +42,11 @@ discover-<lang>/src/
 
 ## Help
 
+- Help works like `gh`: `discover --help` prints the top-level page, whose COMMANDS section lists each subcommand with a short summary, and every subcommand has its own page (`discover <subcommand> --help`) with its own NAME, SYNOPSIS, DESCRIPTION, OPTIONS and so on.
 - All help text and all logic that prints it live under `help/`, never in `cli.rs` or `lib.rs`.
-- `discover-core/src/help/<subcommand>.rs` holds each subcommand's generic entry. The `Help` trait has one method per subcommand, defaulting to that entry.
-- A language's help calls the core entry for every subcommand it supports. Only when its implementation has something specific that must be mentioned does it add `help/<subcommand>.rs` with a function of the same name, and override that one trait method with it.
-- Help text follows the man page format: section headings at the margin, text indented 7 columns, entry descriptions 14. Each paragraph is one line in the source; `fill` breaks it to the line width when printed.
+- `discover-core/src/help/page.rs` holds the top-level page. `discover-core/src/help/<subcommand>.rs` holds each subcommand's generic page and summary. The `Help` trait has one method per subcommand, defaulting to that page.
+- A language's help calls the core page for every subcommand it supports. Only when its implementation has something specific that must be mentioned does it add `help/<subcommand>.rs` with a function of the same name, and override that one trait method with it, replacing only the parts of the page that differ.
+- Every page, top-level or subcommand, follows the man page format: section headings at the margin, text indented 7 columns, entry descriptions 14. Each paragraph is one line in the source; `fill` breaks it to the line width when printed.
 
 ## Working in this repo
 

@@ -146,6 +146,8 @@ impl RbLang {
 impl Lang for RbLang {
   // Names the command in usage messages.
   const NAME: &'static str = "discover --lang=ruby";
+  // Ruby's trace replaces core's.
+  const OVERRIDES: &'static [&'static str] = &["trace"];
 
   fn root(&self) -> &Path {
     &self.project.root

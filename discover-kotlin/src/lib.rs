@@ -32,8 +32,10 @@ pub const LANGUAGE: discover_core::cli::Language = discover_core::cli::Language 
   entry_defaults: "files declaring `main`, Android manifest components, META-INF/services providers",
   // Runs the function below.
   main,
-  // Lists the JVM commands, shared with Java, for --help.
-  usage: discover_jvm::cli::USAGE,
+  // Lists the JVM subcommands, shared with Java, for --help.
+  commands: <discover_jvm::help::JvmHelp as discover_core::help::Help>::COMMANDS,
+  // Gives the JVM's page for a subcommand, shared with Java, for --help.
+  page: discover_core::help::page::<discover_jvm::help::JvmHelp>,
 };
 
 /// Runs the Kotlin navigator.

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub type RbRoot = AstGrep<StrDoc<SupportLang>>;
-type RbNode<'r> = Node<'r, StrDoc<SupportLang>>;
+pub(crate) type RbNode<'r> = Node<'r, StrDoc<SupportLang>>;
 
 /// Whether a file is Ruby that discover parses: `.rb`, Rake files, Rack configs, gemspecs, Jbuilder views and ERB templates (whose embedded code is parsed), and the extensionless Rakefile and Gemfile.
 pub fn is_ruby(path: &str) -> bool {
@@ -198,17 +198,17 @@ impl Facts {
   }
 }
 
-fn line_of(node: &RbNode<'_>) -> usize {
+pub(crate) fn line_of(node: &RbNode<'_>) -> usize {
   node.start_pos().line() + 1
 }
 
 /// The text of a constant path without whitespace (`A :: B` → `A::B`).
-fn squeeze(text: &str) -> String {
+pub(crate) fn squeeze(text: &str) -> String {
   text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 /// Whether a node is a constant or a path of constants (`A`, `A::B`, `::A::B`), as opposed to a path through an expression (`obj.class::X`).
-fn is_constant_path(node: &RbNode<'_>) -> bool {
+pub(crate) fn is_constant_path(node: &RbNode<'_>) -> bool {
   match node.kind().as_ref() {
     "constant" => true,
     "scope_resolution" => node.field("scope").is_none_or(|s| is_constant_path(&s)) && node.field("name").is_some_and(|n| n.kind() == "constant"),
@@ -217,7 +217,7 @@ fn is_constant_path(node: &RbNode<'_>) -> bool {
 }
 
 /// The name a class, module or constant declared as `written` gets inside `outer` (`B` in `A` → `A::B`; `::B` → `B`).
-fn qualify(outer: Option<&String>, written: &str) -> String {
+pub(crate) fn qualify(outer: Option<&String>, written: &str) -> String {
   match (outer, written.strip_prefix("::")) {
     (_, Some(top)) => top.to_string(),
     (Some(outer), None) => format!("{outer}::{written}"),
@@ -226,7 +226,7 @@ fn qualify(outer: Option<&String>, written: &str) -> String {
 }
 
 /// The contents of a string literal without interpolation; None for anything else and for an empty string.
-fn string_value(node: &RbNode<'_>) -> Option<String> {
+pub(crate) fn string_value(node: &RbNode<'_>) -> Option<String> {
   if node.kind() != "string" || node.children().any(|c| c.kind() == "interpolation") {
     return None;
   }
@@ -234,7 +234,7 @@ fn string_value(node: &RbNode<'_>) -> Option<String> {
 }
 
 /// The arguments of a call, without punctuation or comments.
-fn call_args<'r>(call: &RbNode<'r>) -> Vec<RbNode<'r>> {
+pub(crate) fn call_args<'r>(call: &RbNode<'r>) -> Vec<RbNode<'r>> {
   call
     .field("arguments")
     .map(|args| args.children().filter(|c| c.is_named() && c.kind() != "comment").collect())
@@ -242,7 +242,7 @@ fn call_args<'r>(call: &RbNode<'r>) -> Vec<RbNode<'r>> {
 }
 
 /// The method a call invokes, when it has no receiver or the receiver is `receiver`.
-fn method_of(call: &RbNode<'_>, receiver: Option<&str>) -> Option<String> {
+pub(crate) fn method_of(call: &RbNode<'_>, receiver: Option<&str>) -> Option<String> {
   let got = call.field("receiver").map(|r| r.text().to_string());
   (got.as_deref() == receiver).then(|| call.field("method").map(|m| m.text().to_string())).flatten()
 }
@@ -442,170 +442,6 @@ pub fn extract(root: &RbRoot) -> Facts {
   // Stable, so entities on one line keep document order.
   facts.entities.sort_by_key(|e| e.line);
   facts
-}
-
-/// Lines (1-based) of string literals exactly equal to one of `literals`.
-pub fn literal_lines(root: &RbRoot, literals: &[String]) -> Vec<usize> {
-  root
-    .root()
-    .dfs()
-    .filter(|n| n.kind() == "string_content")
-    .filter(|n| literals.iter().any(|l| n.text() == l.as_str()))
-    .map(|n| line_of(&n))
-    .collect()
-}
-
-/// A `belongs_to`, `has_one`, `has_many` or `has_and_belongs_to_many` declaration.
-#[derive(Debug)]
-pub struct Association {
-  /// The macro: `belongs_to`, `has_one`, `has_many` or `has_and_belongs_to_many`.
-  pub kind: String,
-  pub name: String,
-  /// The `class_name:` option, when given.
-  pub class_name: Option<String>,
-  /// `polymorphic: true`: the target class is decided per record.
-  pub polymorphic: bool,
-}
-
-/// What a class body declares that its instances carry, each list in source order. Only statements directly in the body count, so nothing inside methods, blocks or `class << self`.
-#[derive(Debug, Default)]
-pub struct ClassBody {
-  /// The superclass as written, when it is a constant path (`ApplicationRecord`, `ActiveRecord::Base`).
-  pub superclass: Option<String>,
-  /// `self.table_name = "x"`.
-  pub table_name: Option<String>,
-  /// `self.abstract_class = true` or `primary_abstract_class`: an ActiveRecord class with no table of its own.
-  pub abstract_class: bool,
-  /// `attribute :name, :type`, as (name, type); `untyped` when the type isn't a symbol.
-  pub attributes: Vec<(String, String)>,
-  /// The names `attr_accessor`, `attr_reader` and `attr_writer` declare.
-  pub accessors: Vec<String>,
-  pub associations: Vec<Association>,
-}
-
-/// The name a symbol or string argument holds (`:drinks`, `"drinks"`).
-fn name_arg(arg: &RbNode<'_>) -> Option<String> {
-  match arg.kind().as_ref() {
-    "simple_symbol" => Some(arg.text().trim_start_matches(':').to_string()),
-    _ => string_value(arg),
-  }
-}
-
-/// The value of a call's keyword option `key` (`class_name: "X"`, `:class_name => "X"`, or either inside braces).
-fn option<'r>(call: &RbNode<'r>, key: &str) -> Option<RbNode<'r>> {
-  call_args(call)
-    .into_iter()
-    .flat_map(|arg| if arg.kind() == "hash" { arg.children().collect() } else { vec![arg] })
-    .filter(|arg| arg.kind() == "pair")
-    .find(|pair| pair.field("key").is_some_and(|k| k.text().trim_start_matches(':').trim_end_matches(':') == key))
-    .and_then(|pair| pair.field("value"))
-}
-
-/// A class or module's name with its lexical namespace (`class B` inside `module A` → `A::B`).
-fn qualified_name(node: &RbNode<'_>) -> Option<String> {
-  let own = squeeze(&node.field("name")?.text());
-  // The enclosing definitions' names, innermost first.
-  let outer: Vec<String> = node.ancestors().filter(|a| matches!(a.kind().as_ref(), "class" | "module")).filter_map(|a| a.field("name").map(|n| squeeze(&n.text()))).collect();
-  let namespace = outer.iter().rev().fold(None, |acc: Option<String>, written| Some(qualify(acc.as_ref(), written)));
-  Some(qualify(namespace.as_ref(), &own))
-}
-
-/// The body of the first class named `class` (by its qualified name or its own name) in a file; None when the file defines no such class.
-pub fn class_body(root: &RbRoot, class: &str) -> Option<ClassBody> {
-  let wanted = class.strip_prefix("::").unwrap_or(class);
-  let node = root.root().dfs().find(|n| {
-    n.kind() == "class" && qualified_name(n).is_some_and(|q| q == wanted || q.rsplit("::").next() == Some(wanted))
-  })?;
-  let mut body = ClassBody {
-    superclass: node.field("superclass").and_then(|s| s.children().find(is_constant_path)).map(|c| squeeze(&c.text())),
-    ..ClassBody::default()
-  };
-  let Some(statements) = node.field("body") else { return Some(body) };
-  for statement in statements.children() {
-    match statement.kind().as_ref() {
-      "call" => {
-        let Some(method) = method_of(&statement, None) else { continue };
-        let args = call_args(&statement);
-        match method.as_str() {
-          "attr_accessor" | "attr_reader" | "attr_writer" => body.accessors.extend(args.iter().filter_map(name_arg)),
-          "attribute" => {
-            if let Some(name) = args.first().and_then(name_arg) {
-              // `attribute :x, :integer`; a type object (`ActiveModel::Type::Boolean.new`) is left untyped.
-              let ty = args.get(1).filter(|t| t.kind() == "simple_symbol").and_then(name_arg).unwrap_or_else(|| "untyped".to_string());
-              body.attributes.push((name, ty));
-            }
-          }
-          "belongs_to" | "has_one" | "has_many" | "has_and_belongs_to_many" => {
-            if let Some(name) = args.first().and_then(name_arg) {
-              body.associations.push(Association {
-                kind: method.clone(),
-                name,
-                class_name: option(&statement, "class_name").and_then(|v| name_arg(&v)),
-                polymorphic: option(&statement, "polymorphic").is_some_and(|v| v.kind() == "true"),
-              });
-            }
-          }
-          "primary_abstract_class" => body.abstract_class = true,
-          _ => {}
-        }
-      }
-      // `self.table_name = "x"`, `self.abstract_class = true`.
-      "assignment" => {
-        let (Some(left), Some(right)) = (statement.field("left"), statement.field("right")) else { continue };
-        match method_of(&left, Some("self")).as_deref() {
-          Some("table_name") => body.table_name = name_arg(&right),
-          Some("abstract_class") => body.abstract_class = right.kind() == "true",
-          _ => {}
-        }
-      }
-      _ => {}
-    }
-  }
-  Some(body)
-}
-
-/// The columns `create_table "table"` declares in a db/schema.rb, as (name, type) in schema order, the primary key first; None when the schema has no such table. An `array: true` column's type ends in `[]`.
-pub fn schema_columns(root: &RbRoot, table: &str) -> Option<Vec<(String, String)>> {
-  let create = root.root().dfs().find(|n| n.kind() == "call" && method_of(n, None).as_deref() == Some("create_table") && call_args(n).first().and_then(string_value).as_deref() == Some(table))?;
-  let mut columns: Vec<(String, String)> = Vec::new();
-  // The primary key: `id: false` has none, `id: :uuid` sets its type, `primary_key: "x"` its name.
-  let id = option(&create, "id");
-  if id.as_ref().is_none_or(|v| v.kind() != "false") {
-    let name = option(&create, "primary_key").and_then(|v| name_arg(&v)).unwrap_or_else(|| "id".to_string());
-    columns.push((name, id.and_then(|v| name_arg(&v)).unwrap_or_else(|| "bigint".to_string())));
-  }
-  let Some(block) = create.field("block") else { return Some(columns) };
-  // Each `t.<type> "name", ...` in the block; the schema nests nothing deeper.
-  for call in block.dfs().filter(|n| n.kind() == "call" && n.field("receiver").is_some_and(|r| r.kind() == "identifier")) {
-    let Some(method) = call.field("method").map(|m| m.text().to_string()) else { continue };
-    let args = call_args(&call);
-    let type_of = |ty: String| if option(&call, "array").is_some_and(|v| v.kind() == "true") { format!("{ty}[]") } else { ty };
-    match method.as_str() {
-      "timestamps" => columns.extend(["created_at", "updated_at"].map(|c| (c.to_string(), "datetime".to_string()))),
-      "references" | "belongs_to" => {
-        let Some(name) = args.first().and_then(name_arg) else { continue };
-        let ty = option(&call, "type").and_then(|v| name_arg(&v)).unwrap_or_else(|| "bigint".to_string());
-        columns.push((format!("{name}_id"), ty));
-        if option(&call, "polymorphic").is_some_and(|v| v.kind() == "true") {
-          columns.push((format!("{name}_type"), "string".to_string()));
-        }
-      }
-      // Constraints and indexes are not columns.
-      "index" | "check_constraint" | "foreign_key" | "exclusion_constraint" | "unique_constraint" => {}
-      // `t.column "name", :type`.
-      "column" => {
-        if let (Some(name), Some(ty)) = (args.first().and_then(name_arg), args.get(1).and_then(name_arg)) {
-          columns.push((name, type_of(ty)));
-        }
-      }
-      _ => {
-        if let Some(name) = args.first().and_then(string_value) {
-          columns.push((name, type_of(method)));
-        }
-      }
-    }
-  }
-  Some(columns)
 }
 
 /// Rails' `camelize` for one path segment: each underscore-separated word capitalized, or replaced by its acronym (`api_client` → `APIClient` with the acronym `API`).

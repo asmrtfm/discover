@@ -6,8 +6,10 @@
 
 pub mod cache;
 pub mod cli;
+pub mod commands;
+pub mod common;
 pub mod graph;
+pub mod help;
 pub mod memo;
 pub mod par;
 pub mod project;
-pub mod usages;

@@ -3,7 +3,7 @@
 //! index are built from. Caching of those views, dead files and trace come
 //! from discover-core.
 
-use crate::index::{Edge, Index, Tables};
+use crate::jvm::{Edge, Index, Tables};
 use crate::project::Project;
 use crate::{Decl, Jvm, parse};
 use discover_core::cache::{self, Caches, Slot, read_lines, to_json};

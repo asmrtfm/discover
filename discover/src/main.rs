@@ -1,7 +1,9 @@
 //! discover — deterministic codebase navigation. Routes to a language's navigator with `--lang=<lang>`, or to the language detected for the project.
 
 // Imports the language description, the argument parser and the LANG global it sets.
-use discover_core::cli::{LANG, Language, parse_args, write_config};
+use discover_core::cli::{LANG, Language, parse_args};
+// Imports the writer for `discover config`.
+use discover_core::commands::config::write_config;
 // Imports the type main returns as the process's exit status.
 use std::process::ExitCode;
 
@@ -9,8 +11,8 @@ use std::process::ExitCode;
 const LANGS: &[Language] = &[discover_dart::LANGUAGE, discover_java::LANGUAGE, discover_kotlin::LANGUAGE, discover_ruby::LANGUAGE, discover_typescript::LANGUAGE];
 
 fn main() -> ExitCode {
-  // Handles `discover config`, which needs no language or project graph.
-  if std::env::args().nth(1).as_deref() == Some("config") {
+  // Handles `discover config`, which needs no language or project graph; with -h or --help, parse_args prints its page instead.
+  if std::env::args().nth(1).as_deref() == Some("config") && !std::env::args().any(|arg| arg == "-h" || arg == "--help") {
     return write_config(LANGS);
   }
   // Sets the command-line globals, including LANG.

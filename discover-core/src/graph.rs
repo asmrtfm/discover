@@ -67,6 +67,9 @@ pub trait Lang {
     false
   }
 
+  /// The core subcommands this language replaces with its own (Ruby's `trace`); `run` sends them to the language's dispatch.
+  const OVERRIDES: &'static [&'static str] = &[];
+
   /// Whether a file is source code that `trace` can follow. Assets are not;
   /// `usages --assets` looks those up.
   fn is_source(&self, _path: &Path) -> bool {

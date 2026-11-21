@@ -22,10 +22,7 @@ impl Jvm for Java {
     extract(root)
   }
 
-  /// Also matches a leading `/` (classpath resources).
-  fn literal_lines(root: &Root, literal: &str) -> Vec<usize> {
-    literal_lines(root, literal)
-  }
+  const STRING_NODE: &'static str = "string_fragment";
 }
 
 /// `import static a.b.C.m;` → path `a.b.C.m`, static; `import a.b.*;` → path
@@ -145,20 +142,4 @@ pub fn extract(root: &Root) -> Facts {
   }
   facts.decls.sort_by_key(|d| d.line);
   facts
-}
-
-/// Lines (1-based) of string contents matching an asset path: the path
-/// itself, or ending in `/<path>` (e.g. a leading `/` for classpath resources).
-pub fn literal_lines(root: &Root, literal: &str) -> Vec<usize> {
-  let suffix = format!("/{literal}");
-  root
-    .root()
-    .dfs()
-    .filter(|n| n.kind() == "string_fragment")
-    .filter(|n| {
-      let text = n.text();
-      text == literal || text.ends_with(suffix.as_str())
-    })
-    .map(|n| line_of(&n))
-    .collect()
 }

@@ -23,10 +23,7 @@ impl Jvm for Kotlin {
     extract(root)
   }
 
-  /// Also matches longer forms such as file:///android_asset/<path>.
-  fn literal_lines(root: &Root, literal: &str) -> Vec<usize> {
-    literal_lines(root, literal)
-  }
+  const STRING_NODE: &'static str = "string_content";
 }
 
 /// `import a.b.C as D` → path `a.b.C`, alias `D`; `import a.b.*` → path `a.b`, wildcard.
@@ -168,20 +165,4 @@ pub fn extract(root: &Root) -> Facts {
   }
   facts.decls.sort_by_key(|d| d.line);
   facts
-}
-
-/// Lines (1-based) of string contents matching an asset path: the path
-/// itself, or ending in `/<path>` (e.g. file:///android_asset/<path>).
-pub fn literal_lines(root: &Root, literal: &str) -> Vec<usize> {
-  let suffix = format!("/{literal}");
-  root
-    .root()
-    .dfs()
-    .filter(|n| n.kind() == "string_content")
-    .filter(|n| {
-      let text = n.text();
-      text == literal || text.ends_with(suffix.as_str())
-    })
-    .map(|n| line_of(&n))
-    .collect()
 }
